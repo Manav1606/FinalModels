@@ -89,7 +89,7 @@ def detectFaces():
                     face_crop = img[y1:y2, x1:x2]
                     if face_crop.size > 0:
                         j = j + 1
-                        frameName = f"{frameConventions[0]}_{frameConventions[1]}_{frameConventions[2]}_{frameConventions[3]}{j:02}_{frameConventions[4]}_{frameConventions[5]}_{frameConventions[6]}.jpg"
+                        frameName = f"{frameConventions[0]}_{frameConventions[1]}_{frameConventions[2]}_{frameConventions[3][:-2]}{j:02}_{frameConventions[4]}_{frameConventions[5]}_{frameConventions[6]}.jpg"
                         save_path = os.path.join(output_folder, frameName)  
                         cv2.imwrite(save_path, face_crop)
 
