@@ -12,7 +12,7 @@ import logging
 import traceback
 
 # access config  file
-config_path = os.path.join(os.getcwd(), "config.ini")
+config_path = os.path.join(os.getcwd(),"Dual_Time" ,"config.ini")
 config =  configparser.ConfigParser()
 config.read(config_path)
 
@@ -79,20 +79,24 @@ def sendData(ftp,folderName, url, frame, comp, exhinbit, booth, camId,alertType 
             alertType = 3
             
         timeStamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
-        ftpFileName  = f"{comp}_{exhinbit}_{booth}_{camId}_{timeStamp}_{alertType}.jpg"
+        ftpFileName  = f"{comp}_{exhinbit}_{booth}_{timeStamp}_{camId}_{alertType}.jpg"
         ftpPath = config["FTP"].get("ftp_location")
         ftpLocation = os.path.join(ftpPath,booth, datetime.now().date().strftime("%Y-%m-%d"), ftpFileName)
         created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
         ftpRes = util.uploadFileOnFtp(ftp, frame, ftpLocation)
         if not ftpRes:
             logger.error("Error in uploadFileOnFtp")
-            imagePath = f"{folderName}/{ftpFileName}"
+            subFolderName = f"{folderName}/{datetime.now().date()}"
+            if not os.path.exists(subFolderName):
+                os.makedirs(subFolderName)
+            imagePath = f"{subFolderName}/{ftpFileName}"
             success = cv2.imwrite(imagePath, frame)
             if success:
                 logging.error(f"Image saved to {imagePath}")
             else:
                 logging.error(f"Failed to save image to {imagePath}")
-            ftp.close()
+            if ftp is not None:
+                ftp.close()
             ftp = setupFtp(config["FTP"]["userName"], config["FTP"]["password"], config["FTP"]["host"], int(config["FTP"]["port"]))
                         
         api_data = {
@@ -119,18 +123,22 @@ def sendData(ftp,folderName, url, frame, comp, exhinbit, booth, camId,alertType 
 def sendPreviousData(ftp, folderName, url,booth, table = None):
     try:
         if os.path.exists(folderName):
-            images = [f for f in os.listdir(folderName) if f.lower().endswith(".jpg")]
-            for image in images:
-                fileNameSplit = image.split("_")
-                ftpPath = config["FTP"].get("ftp_location")
-                ftpLocation = os.path.join(ftpPath,booth,fileNameSplit[4], image)
-                frame  = cv2.imread(os.path.join(folderName, image))
-                ftpres = util.uploadFileOnFtp(ftp, frame, ftpLocation)
-                if ftpres:
-                    os.remove(os.path.join(folderName, image))
-                else:
-                    ftp.close()
-                    ftp = setupFtp(config["FTP"]["userName"], config["FTP"]["password"], config["FTP"]["host"], int(config["FTP"]["port"]))
+            for subfolder in os.listdir(folderName):
+                imageFolder = os.path.join(folderName, subfolder)
+                images = [f for f in os.listdir(imageFolder) if f.lower().endswith(".jpg")]
+                for image in images:
+                    ftpPath = config["FTP"].get("ftp_location")
+                    ftpLocation = os.path.join(ftpPath,booth,subfolder, image)
+                    frame  = cv2.imread(os.path.join(imageFolder, image))
+                    ftpres = util.uploadFileOnFtp(ftp, frame, ftpLocation)
+                    if ftpres:
+                        os.remove(os.path.join(imageFolder, image))
+                    else:
+                        if ftp is not None:
+                            ftp.close()
+                        ftp = setupFtp(config["FTP"]["userName"], config["FTP"]["password"], config["FTP"]["host"], int(config["FTP"]["port"]))
+                if not os.listdir(imageFolder):
+                    os.rmdir(imageFolder)
         try:
             conn = setupDB(table)
         except Exception as e:
@@ -180,12 +188,18 @@ def detectDualTime(cameraInfo, frameWidth, frameHeight):
                 alertType int(10), filepath varchar(50),mimeType varchar(20), alert_status varchar(20),
                 dateandtime timestamp , currentTime timeStamp Default current_timestamp)'''
                          
-        folderName = "DualTime"
+        folderName = f"Dual_Time/DualTime"
         if not os.path.exists(folderName):
-            os.makedirs(folderName)        
+            os.makedirs(folderName)
+        
+        ftpFolder = f"{config['FTP']['ftp_location']}/{booth}/{datetime.now().date()}"        
         ftp = setupFtp(config["FTP"]["userName"], config["FTP"]["password"], config["FTP"]["host"], int(config["FTP"]["port"]))
+        ftp.ftp_mkdir_recursive(ftpFolder)
         
         startTime, endCombineDate = fetchStartTime(ftp, folderName, url, booth, table)
+        if datetime.now().minute % 5 == 0:
+                threading.Thread(target =  sendPreviousData, args = (ftp, folderName, url,booth),kwargs={'table': table}).start()
+                syncTime = int(time.time())
         
         personabsentTime = 0
         alertAlreadyDone = {}
@@ -204,16 +218,16 @@ def detectDualTime(cameraInfo, frameWidth, frameHeight):
             fps =  cap.cap.get(cv2.CAP_PROP_FPS)
             incTime = 1/fps if fps > 0 else 0.04
             
-            newFrame = frame.copy()
-            pts_list = [np.array([[int(p["x"]), int(p["y"])] for p in rois.get(roi)], dtype=np.int32) for roi in rois.keys()]
-            newFrame = cv2.polylines(newFrame, pts_list, 
-                        True, (255, 0, 0), 2)
             
             results =  model.track(frame,imgsz = 640, conf=0.2,persist=True, iou = 0.4, tracker = "bytetrack.yaml", verbose =False)
             if results is None:
                 continue
             
             for roi in rois.keys():
+                newFrame = frame.copy()
+                pts_list = [np.array([[int(p["x"]), int(p["y"])] for p in rois.get(roi)], dtype=np.int32)]
+                newFrame = cv2.polylines(newFrame, pts_list, 
+                            True, (255, 0, 0), 2)
                 personIds = []
                 if allPeronPresentTime.get(roi) is None:
                     allPeronPresentTime.update({roi: {}})
@@ -262,11 +276,11 @@ def detectDualTime(cameraInfo, frameWidth, frameHeight):
                             # util.saveDataInFile(fileName, personabsentTime, idTimeMapping[roi][id], roi)
                     else:
                         personabsentTime = 0
-                cv2.imshow("Dual Time", newFrame)
+                # cv2.imshow("Dual Time", newFrame)
                 
                 if cv2.waitKey(1) & 0xFF == ord('q'):  # Press 'q' to exit
                     break
-            if int(time.time()) - syncTime > 300:
+            if int(time.time()) - syncTime > 10:
                 threading.Thread(target =  sendPreviousData, args = (ftp, folderName, url,booth),kwargs={'table': table}).start()
                 syncTime = int(time.time())
                                 

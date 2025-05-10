@@ -41,10 +41,6 @@ class setupFtp:
             
     def sendFile(self,fileName, stream):
         try:
-            print("beforeFileName", fileName)
-            fileName = fileName.replace('\\', '/')
-            print("afterFileName", fileName)
-            self.ensure_ftp_path(fileName)
             res = self.ftp.storbinary(f'STOR {fileName}', stream)
             msg = 'Upload %s to FTP Server %s.'
             if res.startswith('226 Transfer complete'):
@@ -57,23 +53,23 @@ class setupFtp:
             logging.error(f"Error in sendFile: {e}")
             return False
         
-    def ensure_ftp_path(self, path):
+    def ftp_mkdir_recursive(self, path):
         try:
-            self.ftp.cwd("/")
-            parts = path.strip('/').split('/')
-            current_path = ''
-            print("parts", parts)
-            for part in parts:
-                print('hii')
-                current_path = f"{current_path}/{part}" if current_path else part
-                
-                try:
-                    self.ftp.cwd(current_path)
-                except Exception:
-                    self.ftp.mkd(current_path)
-                    self.ftp.cwd(current_path)
+            if path == '' or path == '.':
+                return
+            parent = os.path.dirname(path)
+            if parent and parent != path:
+                self.ftp_mkdir_recursive(parent)
+            
+            try:
+                self.ftp.mkd(path)
+            except Exception as e:
+                if "file already exists" in str(e):
+                    return
+                self.ftp_mkdir_recursive(os.path.dirname(path))
+                self.ftp.mkd(path)
         except Exception as e:
-            logger.error(f"error in ensure_ftp_path {e}")  
+            logger.error(f"file already exits, {e}")
 
         
     def close(self):

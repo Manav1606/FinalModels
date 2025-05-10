@@ -7,7 +7,7 @@ import time
 import logging
 from datetime import datetime
 
-config_path = os.path.join(os.getcwd(), "config.ini")
+config_path = os.path.join(os.getcwd(),"Dual_Time", "config.ini")
 config =  configparser.ConfigParser()
 config.read(config_path)
 
