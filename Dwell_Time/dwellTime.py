@@ -245,8 +245,12 @@ def detectDwellTime(cameraInfo, frameWidth, frameHeight):
             for roi in rois.keys():
                 newFrame = frame.copy()
                 pts_list = [np.array([[int(p["x"]), int(p["y"])] for p in rois.get(roi)], dtype=np.int32)]
+                if roi == "dwellTime":
+                    color = (255, 0, 0)
+                else:
+                    color = (0, 0, 255)
                 newFrame = cv2.polylines(newFrame, pts_list, 
-                            True, (255, 0, 0), 2)
+                            True, color, 2)
                 personIds = []
                 if allPeronPresentTime.get(roi) is None:
                     allPeronPresentTime.update({roi: {}})
@@ -270,9 +274,9 @@ def detectDwellTime(cameraInfo, frameWidth, frameHeight):
                                 id = box.id[0].item()
                                 personIds.append(id)
                                 personTime = calculateDwellTime(id, allPeronPresentTime[roi], allPersonsPresent[roi], idTimeMapping[roi], incTime)
-                                newFrame = cv2.putText(newFrame, f"id: {id} Time: {int(personTime)}", (int(rois.get(roi)[2]["x"]), int(rois.get(roi)[2]["y"])), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
                                 if personTime > timeThresholdForDwellTime:
                                     if id not in alertAlreadyDone[roi]:
+                                        newFrame = cv2.putText(newFrame, f"Time(in sec): {int(personTime)}", (int(rois.get(roi)[2]["x"]), int(rois.get(roi)[2]["y"])), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
                                         threading.Thread(
                                             target=sendData,
                                             args=(folderName, url, newFrame, comp, exhibit, booth, cameraId),
@@ -287,6 +291,7 @@ def detectDwellTime(cameraInfo, frameWidth, frameHeight):
                         personabsentTime += incTime
                         if personabsentTime > timeThresholdForPersonPresent:
                             personabsentTime = 0
+                            newFrame = cv2.putText(newFrame, f"STAFF_ABSENT", (int(rois.get(roi)[0]["x"]), int(rois.get(roi)[0]["y"])), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
                             threading.Thread(
                                         target=sendData,
                                         args=(folderName, url, newFrame, comp, exhibit, booth, cameraId),
