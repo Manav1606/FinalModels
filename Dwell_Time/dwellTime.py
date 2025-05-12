@@ -12,14 +12,14 @@ import logging
 import traceback
 
 # access config  file
-config_path = os.path.join(os.getcwd(),"Dual_Time" ,"config.ini")
+config_path = os.path.join(os.getcwd(),"Dwell_Time" ,"config.ini")
 config =  configparser.ConfigParser()
 config.read(config_path)
 
 # acces Logger File
-logger = logging.getLogger('dualTime_logger')
+logger = logging.getLogger('dwellTime_logger')
 
-def calculateDualTime(id, allPeronPresentTime, allPersonsPresent, idTimeMapping, incTime):
+def calculateDwellTime(id, allPeronPresentTime, allPersonsPresent, idTimeMapping, incTime):
     try:
         if id not in allPersonsPresent:
             allPersonsPresent.append(id)
@@ -27,29 +27,29 @@ def calculateDualTime(id, allPeronPresentTime, allPersonsPresent, idTimeMapping,
         allPeronPresentTime[id] =  allPeronPresentTime.get(id,0) + incTime
         return allPeronPresentTime[id]
     except Exception as e:
-        logger.error(f"Error in calculateDualTime: {e}")
+        logger.error(f"Error in calculateDwellTime: {e}")
         return 0
     
-def fetchStartTime(ftp, folderName, url, booth, table):
+def fetchStartTime():
     try:
         currentTime = datetime.now()
         startTime = currentTime.time()
         
-        if config["Dual-Time"].get("startTime") is not None:
-            startTime = datetime.strptime(config["Dual-Time"]["startTime"], "%H:%M:%S")
+        if config["Dwell-Time"].get("startTime") is not None:
+            startTime = datetime.strptime(config["Dwell-Time"]["startTime"], "%H:%M:%S")
         else:
-            config["Dual-Time"]["startTime"] = startTime.strftime("%H:%M:%S")
+            config["Dwell-Time"]["startTime"] = startTime.strftime("%H:%M:%S")
             
-        startDate = datetime.strptime(config["Dual-Time"].get("startDate", currentTime.date().strftime("%Y-%m-%d")), "%Y-%m-%d")
-        endTime = datetime.strptime(config["Dual-Time"].get("endTime", "23:59:59"), "%H:%M:%S")
+        startDate = datetime.strptime(config["Dwell-Time"].get("startDate", currentTime.date().strftime("%Y-%m-%d")), "%Y-%m-%d")
+        endTime = datetime.strptime(config["Dwell-Time"].get("endTime", "23:59:59"), "%H:%M:%S")
         endCombineDate = datetime.combine(startDate, endTime.time())
         combineDate = datetime.combine(startDate, startTime.time())
         
         if endCombineDate < currentTime:
             # saveDataInDB(fileName, rois, cameraInfo.get("camera_id"))
-            sendPreviousData(ftp , folderName, url,booth, table)
+            # sendPreviousData(ftp , folderName, url,booth, table)
             combineDate = datetime.combine(currentTime.date(), startTime.time())
-        config["Dual-Time"]["start_Date"] = currentTime.date().strftime("%Y-%m-%d")
+        config["Dwell-Time"]["start_Date"] = currentTime.date().strftime("%Y-%m-%d")
         with open("config.ini", 'w') as configfile:
                 config.write(configfile)
         return combineDate, endCombineDate 
@@ -60,7 +60,7 @@ def fetchStartTime(ftp, folderName, url, booth, table):
 def saveDataInLocalDB(conn, api_data):
     try:
         cursor = conn.cursor
-        cursor.execute('''INSERT INTO DualTime_Ananlytics (companyCode, exhibitionCode, boothCode, alertType, filepath, mimeType, alert_status, dateandtime) 
+        cursor.execute('''INSERT INTO DwellTime_Ananlytics (companyCode, exhibitionCode, boothCode, alertType, filepath, mimeType, alert_status, dateandtime) 
                           VALUES (?, ?, ?, ?, ?, ?, ?, ?)''', 
                           (api_data["company_code"], api_data["exhibition_code"], api_data["booth_code"], api_data["alert_type"], 
                            api_data["filepath"], api_data["mime_type"], api_data["alert_status"], api_data["dateandtime"]))
@@ -71,15 +71,17 @@ def saveDataInLocalDB(conn, api_data):
         conn.close()
         return False
     
-def sendData(ftp,folderName, url, frame, comp, exhinbit, booth, camId,alertType = "dualTime",  table = None):
+def sendData(ftp,folderName, url, frame, comp, exhinbit, booth, camId,alertType = "dwellTime",  table = None):
     try:
-        if alertType == "dualTime":
+        if alertType == "dwellTime":
             alertType = 9
+            alertName = "dwellTime"
         else:
             alertType = 3
+            alertName = "staff_absent"
             
         timeStamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
-        ftpFileName  = f"{comp}_{exhinbit}_{booth}_{timeStamp}_{camId}_{alertType}.jpg"
+        ftpFileName  = f"{comp}_{exhinbit}_{booth}_{timeStamp}_{camId}_{alertName}.jpg"
         ftpPath = config["FTP"].get("ftp_location")
         ftpLocation = os.path.join(ftpPath,booth, datetime.now().date().strftime("%Y-%m-%d"), ftpFileName)
         created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
@@ -105,7 +107,7 @@ def sendData(ftp,folderName, url, frame, comp, exhinbit, booth, camId,alertType 
             "booth_code": booth,
             "alert_type": alertType,
             "dateandtime": created_at,
-            "filepath": ftpLocation,
+            "filepath": f"ftp://ftp.ttpltech.in//{ftpLocation}",
             "mime_type": "image/jpg",
             "alert_status": "pending",
         }
@@ -126,11 +128,13 @@ def sendPreviousData(ftp, folderName, url,booth, table = None):
             for subfolder in os.listdir(folderName):
                 imageFolder = os.path.join(folderName, subfolder)
                 images = [f for f in os.listdir(imageFolder) if f.lower().endswith(".jpg")]
+                ftpPath = config["FTP"].get("ftp_location")
+                ftpLocation = os.path.join(ftpPath,booth,subfolder)
+                ftp.ftp_mkdir_recursive(ftpLocation)
                 for image in images:
-                    ftpPath = config["FTP"].get("ftp_location")
-                    ftpLocation = os.path.join(ftpPath,booth,subfolder, image)
+                    ftpImageLocation = os.path.join(ftpLocation, image)
                     frame  = cv2.imread(os.path.join(imageFolder, image))
-                    ftpres = util.uploadFileOnFtp(ftp, frame, ftpLocation)
+                    ftpres = util.uploadFileOnFtp(ftp, frame, ftpImageLocation)
                     if ftpres:
                         os.remove(os.path.join(imageFolder, image))
                     else:
@@ -145,7 +149,7 @@ def sendPreviousData(ftp, folderName, url,booth, table = None):
             logger.error(f"Error in setupDB: {e}")
             
         cursor = conn.cursor
-        rows = cursor.execute("SELECT * FROM DualTime_Ananlytics").fetchall()
+        rows = cursor.execute("SELECT * FROM DwellTime_Ananlytics").fetchall()
         for row in rows:
             api_data = {
                 "company_code": row[1],
@@ -159,36 +163,36 @@ def sendPreviousData(ftp, folderName, url,booth, table = None):
             }
             res = util.sendRequest(url, api_data)
             if res:
-                conn.execute("DELETE FROM DualTime_Ananlytics WHERE id = ?", (row[0],))
+                conn.execute("DELETE FROM DwellTime_Ananlytics WHERE id = ?", (row[0],))
                 conn.commit()
-                conn.close()
+            conn.close()
                     
     except Exception as e:
         logger.error(f"Error in sendPreviousData: {e}")
         conn.close()
         return None
 
-def detectDualTime(cameraInfo, frameWidth, frameHeight):
+def detectDwellTime(cameraInfo, frameWidth, frameHeight):
     try:
         video , rois , cameraId = cameraInfo.get("rtsp_url"), cameraInfo.get("rois"), cameraInfo.get("camera_id")
         comp, exhibit, booth = config["Company-Details"].get("company_code"), config["Company-Details"].get("exhibition_code"), config["Company-Details"].get("booth_code")
         url  = config["URLS"].get("alertApi")
         allPeronPresentTime, allPersonsPresent , idTimeMapping = {}, {}, {}
         
-        timeThresholdForDualTime = int(config["Dual-Time"].get("threshholddualtimeinsec", 120))
-        timeThresholdForPersonPresent = int(config["Dual-Time"].get("thresholdpersonpresentinsec", 120))
+        timeThresholdForDwellTime = int(config["Dwell-Time"].get("thresholdDwellTimeInsec", 120))
+        timeThresholdForPersonPresent = int(config["Dwell-Time"].get("thresholdpersonpresentinsec", 120))
         
-        fileName = f"DualTime_{comp}_{exhibit}_{booth}_{datetime.now().date()}.json"
+        # fileName = f"DualTime_{comp}_{exhibit}_{booth}_{datetime.now().date()}.json"
         
         model = YOLO("yolov8n.pt")
         cap = VideoCaptureBuffer(video)
         
-        table = '''create table IF NOT EXISTS DualTime_Ananlytics 
+        table = '''create table IF NOT EXISTS DwellTime_Ananlytics 
                 (id INTEGER  primary key AUTOINCREMENT,companyCode varchar(40),exhibitionCode VARCHAR(50),boothCode VARCHAR(50) ,
                 alertType int(10), filepath varchar(50),mimeType varchar(20), alert_status varchar(20),
                 dateandtime timestamp , currentTime timeStamp Default current_timestamp)'''
                          
-        folderName = f"Dual_Time/DualTime"
+        folderName = f"Dwell_Time/DwellTime"
         if not os.path.exists(folderName):
             os.makedirs(folderName)
         
@@ -196,7 +200,7 @@ def detectDualTime(cameraInfo, frameWidth, frameHeight):
         ftp = setupFtp(config["FTP"]["userName"], config["FTP"]["password"], config["FTP"]["host"], int(config["FTP"]["port"]))
         ftp.ftp_mkdir_recursive(ftpFolder)
         
-        startTime, endCombineDate = fetchStartTime(ftp, folderName, url, booth, table)
+        startTime, endCombineDate = fetchStartTime()
         if datetime.now().minute % 5 == 0:
                 threading.Thread(target =  sendPreviousData, args = (ftp, folderName, url,booth),kwargs={'table': table}).start()
                 syncTime = int(time.time())
@@ -247,23 +251,23 @@ def detectDualTime(cameraInfo, frameWidth, frameHeight):
                         personTime = 0
                         if int(classId) == 0 and box.id is not None:
                             x, y, w, h = map(int, box.xywh[0])
-                            if util.personInsidePolygon(rois.get(roi), (x, y)) and roi == "DualTime":
+                            if util.personInsidePolygon(rois.get(roi), (x, y)) and roi == "dwellTime":
                                 id = box.id[0].item()
                                 personIds.append(id)
-                                personTime = calculateDualTime(id, allPeronPresentTime[roi], allPersonsPresent[roi], idTimeMapping[roi], incTime)
+                                personTime = calculateDwellTime(id, allPeronPresentTime[roi], allPersonsPresent[roi], idTimeMapping[roi], incTime)
                                 newFrame = cv2.putText(newFrame, f"id: {id} Time: {int(personTime)}", (int(rois.get(roi)[2]["x"]), int(rois.get(roi)[2]["y"])), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-                                if personTime > timeThresholdForDualTime:
+                                if personTime > timeThresholdForDwellTime:
                                     if id not in alertAlreadyDone[roi]:
                                         threading.Thread(
                                             target=sendData,
                                             args=(ftp, folderName, url, newFrame, comp, exhibit, booth, cameraId),
-                                            kwargs={'alertType': 'dualTime', 'table': table}
+                                            kwargs={'alertType': 'dwellTime', 'table': table}
                                         ).start()
                                         alertAlreadyDone[roi].append(id)
                                     # util.saveDataInFile(fileName, personTime, idTimeMapping[roi][id], roi)
-                            if util.personInsidePolygon(rois.get(roi), (x, y)) and roi != "DualTime":
+                            if util.personInsidePolygon(rois.get(roi), (x, y)) and roi != "dwellTime":
                                 totalPersonPresent +=1
-                if roi!="DualTime":
+                if roi!="dwellTime":
                     if totalPersonPresent == 0:
                         personabsentTime += incTime
                         if personabsentTime > timeThresholdForPersonPresent:
@@ -276,13 +280,13 @@ def detectDualTime(cameraInfo, frameWidth, frameHeight):
                             # util.saveDataInFile(fileName, personabsentTime, idTimeMapping[roi][id], roi)
                     else:
                         personabsentTime = 0
-                # cv2.imshow("Dual Time", newFrame)
+                # cv2.imshow("Dwell Time", newFrame)
                 
                 if cv2.waitKey(1) & 0xFF == ord('q'):  # Press 'q' to exit
                     break
-            if int(time.time()) - syncTime > 10:
+            if int(time.time()) - syncTime > 300:
                 threading.Thread(target =  sendPreviousData, args = (ftp, folderName, url,booth),kwargs={'table': table}).start()
                 syncTime = int(time.time())
                                 
     except Exception as e:
-        logger.error(f"Error in detectDualTime: {e}\n{traceback.format_exc()}")
+        logger.error(f"Error in detectDwellTime: {e}\n{traceback.format_exc()}")

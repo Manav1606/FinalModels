@@ -11,7 +11,7 @@ import logging
 import requests
 from io import BytesIO
 
-logger = logging.getLogger('dualTime_logger')
+logger = logging.getLogger('dwellTime_logger')
 
 class setupDB:
     def __init__(self, table):
@@ -65,6 +65,8 @@ class setupFtp:
                 self.ftp.mkd(path)
             except Exception as e:
                 if "file already exists" in str(e):
+                    return
+                if "closed by the remote host" in str (e):
                     return
                 self.ftp_mkdir_recursive(os.path.dirname(path))
                 self.ftp.mkd(path)
