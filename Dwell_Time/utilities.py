@@ -5,7 +5,7 @@ import threading
 import cv2
 import numpy as np
 from pathlib import Path
-from ftplib import FTP
+from ftplib import FTP, all_errors
 import json
 import logging
 import requests
@@ -26,31 +26,42 @@ class setupDB:
         self.conn.close()  
         
 class setupFtp:
-    def __init__(self, userName, password, host, port):
+    def __init__(self, userName, password, host, port, timeout = 10):
         self.userName = userName
         self.password = password
         self.host = host
         self.port = port
+        self.timeout = timeout
+        self.ftp = None
+        self.connect()
         # self.ftp = FTP(host = self.host, user = self.userName, passwd = self.password, port = self.port)
+
+            
+    def connect(self):
         try:
             self.ftp = FTP()
-            self.ftp.connect(self.host, self.port)
+            self.ftp.connect(self.host, self.port, timeout=self.timeout)
             self.ftp.login(self.userName, self.password)
-        except Exception as e:
-            logging.error(f"FTP connection failed: {e}")
+            logger.info(f"Connected to FTP server {self.host}:{self.port}")
+        except all_errors as e:
+            logger.error(f"FTP connection failed: {e}")
+            self.ftp = None
             
     def sendFile(self,fileName, stream):
+        if not self.ftp:
+            logger.error("FTP connection is not established.")
+            return False
         try:
             res = self.ftp.storbinary(f'STOR {fileName}', stream)
             msg = 'Upload %s to FTP Server %s.'
             if res.startswith('226 Transfer complete'):
-                logging.error(msg % ('success', self.host))
+                logger.error(msg % ('success', self.host))
                 return True
             else:
-                logging.error(msg % ('falied', self.host)) 
+                logger.error(msg % ('falied', self.host)) 
                 return False  
-        except Exception as e:
-            logging.error(f"Error in sendFile: {e}")
+        except all_errors as e:
+            logger.error(f"Error in sendFile: {e}")
             return False
         
     def ftp_mkdir_recursive(self, path):
@@ -78,11 +89,13 @@ class setupFtp:
         if self.ftp:
             try:
                 self.ftp.quit() 
-                logging.info("FTP connection closed.")
-            except Exception as e:
-                logging.error(f"Error closing FTP connection: {e}")
+                logger.info("FTP connection closed.")
+            except all_errors as e:
+                logger.error(f"Error closing FTP connection: {e}")
+            finally:
+                self.ftp = None
         else:
-            logging.error("FTP connection is not established.")
+            logger.error("FTP connection is not established.")
             return 
         
 class VideoCaptureBuffer:
@@ -136,10 +149,10 @@ def personInsidePolygon(points, person):
 def saveDataInFile(fileName, data, id, roi):
     try:
         if not fileName.endswith(".json"):
-            logging.error("File Name is not json")
+            logger.error("File Name is not json")
             return
         if not data:
-            logging.error("Data is empty")
+            logger.error("Data is empty")
             return
         file_path = Path(fileName)
         if not file_path.exists():
@@ -160,7 +173,7 @@ def saveDataInFile(fileName, data, id, roi):
                 json.dump(fileData, f)
         return
     except Exception as e:
-        logging.error(f"Error in saveDataInFile: {e}") 
+        logger.error(f"Error in saveDataInFile: {e}") 
         
 def sendRequest(url, data):
     try:
@@ -169,13 +182,13 @@ def sendRequest(url, data):
         }
         response = requests.post(url, json=data, headers=headers)
         if response.status_code == 200:
-            logging.error(f"Data sent successfully to {url}")
+            logger.error(f"Data sent successfully to {url}")
             return True
         else:
-            logging.error(f"Error in sendRequest: {response.status_code} - {response.text}")
+            logger.error(f"Error in sendRequest: {response.status_code} - {response.text}")
             return False
     except Exception as e:
-        logging.error(f"Error in sendRequest: {e}")
+        logger.error(f"Error in sendRequest: {e}")
         return False
     
 def uploadFileOnFtp(ftp,frame, ftpPath):
@@ -187,5 +200,5 @@ def uploadFileOnFtp(ftp,frame, ftpPath):
             res = ftp.sendFile(ftpPath,stream)
             return res
     except Exception as e:
-        logging.error(f"Error in uploadFileOnFtp: {e}")
+        logger.error(f"Error in uploadFileOnFtp: {e}")
         return False

@@ -65,8 +65,8 @@ def faces():
                         if face.size > 0:  # Make sure the region is valid
                             frameName = f"{frameConventions[0]}_{frameConventions[1]}_{frameConventions[2]}_{frameConventions[3][:-2]}{box_idx:02}_{frameConventions[4]}_{frameConventions[5]}_{frameConventions[6]}.jpg"
                             save_path = os.path.join(output_folder, frameName)
-                            newFace = cv2.resize(face, (256, 256))
-                            success = cv2.imwrite(save_path, newFace)
+                            # newFace = cv2.resize(face, (256, 256))
+                            success = cv2.imwrite(save_path, face)
                             if not success:
                                 logging.error(f"Error saving image: {save_path}")  
                     # cv2.waitKey(500)

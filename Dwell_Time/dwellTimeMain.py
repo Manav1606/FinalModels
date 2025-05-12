@@ -15,7 +15,7 @@ config.read(config_path)
 log_filename = f"DwellTime_{datetime.now().date()}.log"
 log_filepath = os.path.join(os.getcwd(), log_filename)
 logger = logging.getLogger('dwellTime_logger')
-logger.setLevel(logging.ERROR)
+logger.setLevel(logging.INFO)
 if not logger.handlers:
     file_mode = 'a' if os.path.exists(log_filepath) else 'w'
     file_handler = logging.FileHandler(log_filepath, mode=file_mode)

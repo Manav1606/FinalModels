@@ -49,7 +49,7 @@ def fetchStartTime():
             # saveDataInDB(fileName, rois, cameraInfo.get("camera_id"))
             # sendPreviousData(ftp , folderName, url,booth, table)
             combineDate = datetime.combine(currentTime.date(), startTime.time())
-        config["Dwell-Time"]["start_Date"] = currentTime.date().strftime("%Y-%m-%d")
+        config["Dwell-Time"]["startDate"] = currentTime.date().strftime("%Y-%m-%d")
         with open("config.ini", 'w') as configfile:
                 config.write(configfile)
         return combineDate, endCombineDate 
@@ -71,7 +71,7 @@ def saveDataInLocalDB(conn, api_data):
         conn.close()
         return False
     
-def sendData(ftp,folderName, url, frame, comp, exhinbit, booth, camId,alertType = "dwellTime",  table = None):
+def sendData(folderName, url, frame, comp, exhinbit, booth, camId,alertType = "dwellTime",  table = None):
     try:
         if alertType == "dwellTime":
             alertType = 9
@@ -79,7 +79,12 @@ def sendData(ftp,folderName, url, frame, comp, exhinbit, booth, camId,alertType 
         else:
             alertType = 3
             alertName = "staff_absent"
-            
+        
+        try:      
+            ftp = setupFtp(config["FTP"]["userName"], config["FTP"]["password"], config["FTP"]["host"], int(config["FTP"]["port"]))
+        except Exception as e:
+            logger.error(f"error in making directory {e}") 
+               
         timeStamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
         ftpFileName  = f"{comp}_{exhinbit}_{booth}_{timeStamp}_{camId}_{alertName}.jpg"
         ftpPath = config["FTP"].get("ftp_location")
@@ -94,12 +99,12 @@ def sendData(ftp,folderName, url, frame, comp, exhinbit, booth, camId,alertType 
             imagePath = f"{subFolderName}/{ftpFileName}"
             success = cv2.imwrite(imagePath, frame)
             if success:
-                logging.error(f"Image saved to {imagePath}")
+                logger.error(f"Image saved to {imagePath}")
             else:
-                logging.error(f"Failed to save image to {imagePath}")
-            if ftp is not None:
-                ftp.close()
-            ftp = setupFtp(config["FTP"]["userName"], config["FTP"]["password"], config["FTP"]["host"], int(config["FTP"]["port"]))
+                logger.error(f"Failed to save image to {imagePath}")
+            
+        if ftp is not None:
+            ftp.close()
                         
         api_data = {
             "company_code": comp,
@@ -122,8 +127,12 @@ def sendData(ftp,folderName, url, frame, comp, exhinbit, booth, camId,alertType 
         logger.error(f"Error in sendData: {e}\n{traceback.format_exc()}")
         return None
     
-def sendPreviousData(ftp, folderName, url,booth, table = None):
+def sendPreviousData(folderName, url,booth, table = None):
     try:
+        try:      
+            ftp = setupFtp(config["FTP"]["userName"], config["FTP"]["password"], config["FTP"]["host"], int(config["FTP"]["port"]))
+        except Exception as e:
+            logger.error(f"error in making directory {e}")
         if os.path.exists(folderName):
             for subfolder in os.listdir(folderName):
                 imageFolder = os.path.join(folderName, subfolder)
@@ -140,9 +149,11 @@ def sendPreviousData(ftp, folderName, url,booth, table = None):
                     else:
                         if ftp is not None:
                             ftp.close()
-                        ftp = setupFtp(config["FTP"]["userName"], config["FTP"]["password"], config["FTP"]["host"], int(config["FTP"]["port"]))
+                        ftp.connect()
                 if not os.listdir(imageFolder):
                     os.rmdir(imageFolder)
+        if ftp is not None:
+            ftp.close()
         try:
             conn = setupDB(table)
         except Exception as e:
@@ -196,13 +207,17 @@ def detectDwellTime(cameraInfo, frameWidth, frameHeight):
         if not os.path.exists(folderName):
             os.makedirs(folderName)
         
-        ftpFolder = f"{config['FTP']['ftp_location']}/{booth}/{datetime.now().date()}"        
-        ftp = setupFtp(config["FTP"]["userName"], config["FTP"]["password"], config["FTP"]["host"], int(config["FTP"]["port"]))
-        ftp.ftp_mkdir_recursive(ftpFolder)
+        ftpFolder = f"{config['FTP']['ftp_location']}/{booth}/{datetime.now().date()}"  
+        try:      
+            ftp = setupFtp(config["FTP"]["userName"], config["FTP"]["password"], config["FTP"]["host"], int(config["FTP"]["port"]))
+            ftp.ftp_mkdir_recursive(ftpFolder)
+            ftp.close()
+        except Exception as e:
+            logger.error(f"error in making directory {e}")
         
         startTime, endCombineDate = fetchStartTime()
         if datetime.now().minute % 5 == 0:
-                threading.Thread(target =  sendPreviousData, args = (ftp, folderName, url,booth),kwargs={'table': table}).start()
+                threading.Thread(target =  sendPreviousData, args = (folderName, url,booth),kwargs={'table': table}).start()
                 syncTime = int(time.time())
         
         personabsentTime = 0
@@ -260,7 +275,7 @@ def detectDwellTime(cameraInfo, frameWidth, frameHeight):
                                     if id not in alertAlreadyDone[roi]:
                                         threading.Thread(
                                             target=sendData,
-                                            args=(ftp, folderName, url, newFrame, comp, exhibit, booth, cameraId),
+                                            args=(folderName, url, newFrame, comp, exhibit, booth, cameraId),
                                             kwargs={'alertType': 'dwellTime', 'table': table}
                                         ).start()
                                         alertAlreadyDone[roi].append(id)
@@ -274,7 +289,7 @@ def detectDwellTime(cameraInfo, frameWidth, frameHeight):
                             personabsentTime = 0
                             threading.Thread(
                                         target=sendData,
-                                        args=(ftp, folderName, url, newFrame, comp, exhibit, booth, cameraId),
+                                        args=(folderName, url, newFrame, comp, exhibit, booth, cameraId),
                                         kwargs={'alertType': 'personPresent', 'table': table}
                                     ).start()
                             # util.saveDataInFile(fileName, personabsentTime, idTimeMapping[roi][id], roi)
@@ -285,7 +300,7 @@ def detectDwellTime(cameraInfo, frameWidth, frameHeight):
                 if cv2.waitKey(1) & 0xFF == ord('q'):  # Press 'q' to exit
                     break
             if int(time.time()) - syncTime > 300:
-                threading.Thread(target =  sendPreviousData, args = (ftp, folderName, url,booth),kwargs={'table': table}).start()
+                threading.Thread(target =  sendPreviousData, args = (folderName, url,booth),kwargs={'table': table}).start()
                 syncTime = int(time.time())
                                 
     except Exception as e:
