@@ -223,7 +223,7 @@ def detectDwellTime(cameraInfo, frameWidth, frameHeight):
         personabsentTime = 0
         alertAlreadyDone = {}
         syncTime = int(time.time())
-        while datetime.now() < endCombineDate:
+        while datetime.now() >= startTime and datetime.now() < endCombineDate:
             ret, frame = cap.read()
             if not ret:
                 cap.release()
@@ -276,7 +276,9 @@ def detectDwellTime(cameraInfo, frameWidth, frameHeight):
                                 personTime = calculateDwellTime(id, allPeronPresentTime[roi], allPersonsPresent[roi], idTimeMapping[roi], incTime)
                                 if personTime > timeThresholdForDwellTime:
                                     if id not in alertAlreadyDone[roi]:
-                                        newFrame = cv2.putText(newFrame, f"Time(in sec): {int(personTime)}", (int(rois.get(roi)[2]["x"]), int(rois.get(roi)[2]["y"])), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                                        x, y, top_left,bottom_right  = util.fetchTextScale(int(rois.get(roi)[2]["x"]), int(rois.get(roi)[2]["y"]), text = f"Time(in sec): {int(personTime)}" )
+                                        cv2.rectangle(newFrame, top_left, bottom_right, (255, 255, 255), thickness=cv2.FILLED)
+                                        newFrame = cv2.putText(newFrame, f"Time(in sec): {int(personTime)}", (x, y), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
                                         threading.Thread(
                                             target=sendData,
                                             args=(folderName, url, newFrame, comp, exhibit, booth, cameraId),
@@ -291,7 +293,9 @@ def detectDwellTime(cameraInfo, frameWidth, frameHeight):
                         personabsentTime += incTime
                         if personabsentTime > timeThresholdForPersonPresent:
                             personabsentTime = 0
-                            newFrame = cv2.putText(newFrame, f"STAFF_ABSENT", (int(rois.get(roi)[0]["x"]), int(rois.get(roi)[0]["y"])), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                            x, y, top_left,bottom_right  = util.fetchTextScale(int(rois.get(roi)[0]["x"]), int(rois.get(roi)[0]["y"]) )
+                            cv2.rectangle(newFrame, top_left, bottom_right, (255, 255, 255), thickness=cv2.FILLED)
+                            newFrame = cv2.putText(newFrame, f"STAFF_ABSENT", (x, y), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
                             threading.Thread(
                                         target=sendData,
                                         args=(folderName, url, newFrame, comp, exhibit, booth, cameraId),
@@ -300,7 +304,6 @@ def detectDwellTime(cameraInfo, frameWidth, frameHeight):
                             # util.saveDataInFile(fileName, personabsentTime, idTimeMapping[roi][id], roi)
                     else:
                         personabsentTime = 0
-                # cv2.imshow("Dwell Time", newFrame)
                 
                 if cv2.waitKey(1) & 0xFF == ord('q'):  # Press 'q' to exit
                     break

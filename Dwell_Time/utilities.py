@@ -202,3 +202,16 @@ def uploadFileOnFtp(ftp,frame, ftpPath):
     except Exception as e:
         logger.error(f"Error in uploadFileOnFtp: {e}")
         return False
+
+def fetchTextScale(x, y, text="STAFF_ABSENT", font=cv2.FONT_HERSHEY_SIMPLEX, fontScale=1, thickness=2):
+    (text_width, text_height), baseline = cv2.getTextSize(text, font, fontScale, thickness)
+    text_y = y - 10
+    if text_y - text_height < 0:
+        text_y = y + text_height + 10
+        
+    top_left = (x - 5, text_y - text_height - 5)
+    bottom_right = (x + text_width + 5, text_y + 5)
+    
+    return x, text_y, top_left, bottom_right
+
+        
