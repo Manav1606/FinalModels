@@ -192,6 +192,8 @@ def detectDwellTime(cameraInfo, frameWidth, frameHeight):
         
         timeThresholdForDwellTime = int(config["Dwell-Time"].get("thresholdDwellTimeInsec", 120))
         timeThresholdForPersonPresent = int(config["Dwell-Time"].get("thresholdpersonpresentinsec", 120))
+        coolDownTime = int(config["Dwell-Time"]["coolDownTime"])
+        coolDown = coolDownTime
         
         # fileName = f"DualTime_{comp}_{exhibit}_{booth}_{datetime.now().date()}.json"
         
@@ -292,18 +294,25 @@ def detectDwellTime(cameraInfo, frameWidth, frameHeight):
                     if totalPersonPresent == 0:
                         personabsentTime += incTime
                         if personabsentTime > timeThresholdForPersonPresent:
-                            personabsentTime = 0
-                            x, y, top_left,bottom_right  = util.fetchTextScale(int(rois.get(roi)[0]["x"]), int(rois.get(roi)[0]["y"]) )
-                            cv2.rectangle(newFrame, top_left, bottom_right, (255, 255, 255), thickness=cv2.FILLED)
-                            newFrame = cv2.putText(newFrame, f"STAFF_ABSENT", (x, y), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-                            threading.Thread(
-                                        target=sendData,
-                                        args=(folderName, url, newFrame, comp, exhibit, booth, cameraId),
-                                        kwargs={'alertType': 'personPresent', 'table': table}
-                                    ).start()
-                            # util.saveDataInFile(fileName, personabsentTime, idTimeMapping[roi][id], roi)
+                            if coolDown == coolDownTime:
+                                # personabsentTime = 0
+                                x, y, top_left,bottom_right  = util.fetchTextScale(int(rois.get(roi)[0]["x"]), int(rois.get(roi)[0]["y"]) )
+                                cv2.rectangle(newFrame, top_left, bottom_right, (255, 255, 255), thickness=cv2.FILLED)
+                                newFrame = cv2.putText(newFrame, f"STAFF_ABSENT", (x, y), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                                threading.Thread(
+                                            target=sendData,
+                                            args=(folderName, url, newFrame, comp, exhibit, booth, cameraId),
+                                            kwargs={'alertType': 'personPresent', 'table': table}
+                                        ).start()
+                                # util.saveDataInFile(fileName, personabsentTime, idTimeMapping[roi][id], roi)
+                                coolDown -= incTime
+                            else:
+                                coolDown -=incTime
+                                if coolDown<= 0:
+                                    coolDown = coolDownTime
                     else:
                         personabsentTime = 0
+                        coolDown = coolDownTime
                 
                 if cv2.waitKey(1) & 0xFF == ord('q'):  # Press 'q' to exit
                     break
