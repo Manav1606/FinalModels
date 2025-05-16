@@ -12,7 +12,7 @@ import logging
 import traceback
 
 # access config  file
-config_path = os.path.join(os.getcwd(),"Dwell_Time" ,"config.ini")
+config_path = os.path.join(os.getcwd() ,"config.ini")
 config =  configparser.ConfigParser()
 config.read(config_path)
 
@@ -129,31 +129,33 @@ def sendData(folderName, url, frame, comp, exhinbit, booth, camId,alertType = "d
     
 def sendPreviousData(folderName, url,booth, table = None):
     try:
-        try:      
-            ftp = setupFtp(config["FTP"]["userName"], config["FTP"]["password"], config["FTP"]["host"], int(config["FTP"]["port"]))
-        except Exception as e:
-            logger.error(f"error in making directory {e}")
         if os.path.exists(folderName):
-            for subfolder in os.listdir(folderName):
-                imageFolder = os.path.join(folderName, subfolder)
-                images = [f for f in os.listdir(imageFolder) if f.lower().endswith(".jpg")]
-                ftpPath = config["FTP"].get("ftp_location")
-                ftpLocation = os.path.join(ftpPath,booth,subfolder)
-                ftp.ftp_mkdir_recursive(ftpLocation)
-                for image in images:
-                    ftpImageLocation = os.path.join(ftpLocation, image)
-                    frame  = cv2.imread(os.path.join(imageFolder, image))
-                    ftpres = util.uploadFileOnFtp(ftp, frame, ftpImageLocation)
-                    if ftpres:
-                        os.remove(os.path.join(imageFolder, image))
-                    else:
-                        if ftp is not None:
-                            ftp.close()
-                        ftp.connect()
-                if not os.listdir(imageFolder):
-                    os.rmdir(imageFolder)
-        if ftp is not None:
-            ftp.close()
+            if len(os.listdir(folderName)) > 0:   
+                try:      
+                    ftp = setupFtp(config["FTP"]["userName"], config["FTP"]["password"], config["FTP"]["host"], int(config["FTP"]["port"]))
+                except Exception as e:
+                    logger.error(f"error in making directory {e}")
+                if os.path.exists(folderName):
+                    for subfolder in os.listdir(folderName):
+                        imageFolder = os.path.join(folderName, subfolder)
+                        images = [f for f in os.listdir(imageFolder) if f.lower().endswith(".jpg")]
+                        ftpPath = config["FTP"].get("ftp_location")
+                        ftpLocation = os.path.join(ftpPath,booth,subfolder)
+                        ftp.ftp_mkdir_recursive(ftpLocation)
+                        for image in images:
+                            ftpImageLocation = os.path.join(ftpLocation, image)
+                            frame  = cv2.imread(os.path.join(imageFolder, image))
+                            ftpres = util.uploadFileOnFtp(ftp, frame, ftpImageLocation)
+                            if ftpres:
+                                os.remove(os.path.join(imageFolder, image))
+                            else:
+                                if ftp is not None:
+                                    ftp.close()
+                                ftp.connect()
+                        if not os.listdir(imageFolder):
+                            os.rmdir(imageFolder)
+                if ftp is not None:
+                    ftp.close()
         try:
             conn = setupDB(table)
         except Exception as e:
@@ -183,29 +185,24 @@ def sendPreviousData(folderName, url,booth, table = None):
         conn.close()
         return None
 
-def detectDwellTime(cameraInfo, frameWidth, frameHeight):
+def detectDwellTime(cameraInfo, frameWidth, frameHeight,startTime, endCombineDate, url, folderName, table = None):
     try:
         video , rois , cameraId = cameraInfo.get("rtsp_url"), cameraInfo.get("rois"), cameraInfo.get("camera_id")
+        logger.info(f"started Camera {cameraId}")
         comp, exhibit, booth = config["Company-Details"].get("company_code"), config["Company-Details"].get("exhibition_code"), config["Company-Details"].get("booth_code")
-        url  = config["URLS"].get("alertApi")
-        allPeronPresentTime, allPersonsPresent , idTimeMapping = {}, {}, {}
         
+        allPeronPresentTime, allPersonsPresent , idTimeMapping = {}, {}, {}
         timeThresholdForDwellTime = int(config["Dwell-Time"].get("thresholdDwellTimeInsec", 120))
         timeThresholdForPersonPresent = int(config["Dwell-Time"].get("thresholdpersonpresentinsec", 120))
         coolDownTime = int(config["Dwell-Time"]["coolDownTime"])
         coolDown = coolDownTime
         
+        # startTime, endCombineDate = fetchStartTime()
         # fileName = f"DualTime_{comp}_{exhibit}_{booth}_{datetime.now().date()}.json"
         
         model = YOLO("yolov8n.pt")
         cap = VideoCaptureBuffer(video)
-        
-        table = '''create table IF NOT EXISTS DwellTime_Ananlytics 
-                (id INTEGER  primary key AUTOINCREMENT,companyCode varchar(40),exhibitionCode VARCHAR(50),boothCode VARCHAR(50) ,
-                alertType int(10), filepath varchar(50),mimeType varchar(20), alert_status varchar(20),
-                dateandtime timestamp , currentTime timeStamp Default current_timestamp)'''
                          
-        folderName = f"Dwell_Time/DwellTime"
         if not os.path.exists(folderName):
             os.makedirs(folderName)
         
@@ -217,14 +214,11 @@ def detectDwellTime(cameraInfo, frameWidth, frameHeight):
         except Exception as e:
             logger.error(f"error in making directory {e}")
         
-        startTime, endCombineDate = fetchStartTime()
-        if datetime.now().minute % 5 == 0:
-                threading.Thread(target =  sendPreviousData, args = (folderName, url,booth),kwargs={'table': table}).start()
-                syncTime = int(time.time())
         
         personabsentTime = 0
         alertAlreadyDone = {}
         syncTime = int(time.time())
+        lastFrameTime =  datetime.now()
         while datetime.now() >= startTime and datetime.now() < endCombineDate:
             ret, frame = cap.read()
             if not ret:
@@ -236,9 +230,12 @@ def detectDwellTime(cameraInfo, frameWidth, frameHeight):
             frame = cv2.resize(frame, (frameWidth, frameHeight))
             totalPersonPresent = 0 
             
-            fps =  cap.cap.get(cv2.CAP_PROP_FPS)
-            incTime = 1/fps if fps > 0 else 0.04
+            now = datetime.now()
+            incTime = (now - lastFrameTime).total_seconds()
+            lastFrameTime = now
             
+            # fps =  cap.cap.get(cv2.CAP_PROP_FPS)
+            # incTime = 1/fps if fps > 0 else 0.04
             
             results =  model.track(frame,imgsz = 640, conf=0.2,persist=True, iou = 0.4, tracker = "bytetrack.yaml", verbose =False)
             if results is None:
@@ -319,6 +316,7 @@ def detectDwellTime(cameraInfo, frameWidth, frameHeight):
             if int(time.time()) - syncTime > 300:
                 threading.Thread(target =  sendPreviousData, args = (folderName, url,booth),kwargs={'table': table}).start()
                 syncTime = int(time.time())
+        logger.info("Time Over")   
                                 
     except Exception as e:
         logger.error(f"Error in detectDwellTime: {e}\n{traceback.format_exc()}")

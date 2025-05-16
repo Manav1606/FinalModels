@@ -7,13 +7,17 @@ import time
 import logging
 from datetime import datetime
 
-config_path = os.path.join(os.getcwd(),"Dwell_Time", "config.ini")
+config_path = os.path.join(os.getcwd(), "config.ini")
 config =  configparser.ConfigParser()
 config.read(config_path)
 
 #define logger file
+logFolderName = "Dwell_Time_Logger"
+if not os.path.exists(logFolderName):
+    os.makedirs(logFolderName)
+    
 log_filename = f"DwellTime_{datetime.now().date()}.log"
-log_filepath = os.path.join(os.getcwd(), log_filename)
+log_filepath = os.path.join(os.getcwd(),logFolderName, log_filename)
 logger = logging.getLogger('dwellTime_logger')
 logger.setLevel(logging.INFO)
 if not logger.handlers:
@@ -27,18 +31,33 @@ def dwellTimeMain():
     try:
         cameras = json.loads(config["Dwell-Time"]["cameras_info"])
         frameWidth, frameHeight = int(config["Dwell-Time"]["frameWidth"]), int(config["Dwell-Time"]["frameHeight"])
+        url  = config["URLS"].get("alertApi")
+        imageFolderName = f"DwellTime"
+        table = '''create table IF NOT EXISTS DwellTime_Ananlytics 
+            (id INTEGER  primary key AUTOINCREMENT,companyCode varchar(40),exhibitionCode VARCHAR(50),boothCode VARCHAR(50) ,
+            alertType int(10), filepath varchar(50),mimeType varchar(20), alert_status varchar(20),
+            dateandtime timestamp , currentTime timeStamp Default current_timestamp)'''
+        
         while True:
-            thr = []
+            
+            if datetime.now().minute % 10 == 0:
+                threading.Thread(target =  dwellTime.sendPreviousData, args = (imageFolderName, url,config["Company-Details"].get("booth_code")),kwargs={'table': table}).start()
+                
+            startTime, endCombineDate = dwellTime.fetchStartTime()
+            
+            if datetime.now() >= startTime and datetime.now() < endCombineDate:
+                thr = []
 
-            for cameraInfo in cameras:
-                if cameraInfo:
-                    t = threading.Thread(target=dwellTime.detectDwellTime, args=(cameraInfo,frameWidth, frameHeight))
-                    t.start()  
-                    thr.append(t)  
-            for t in thr:
-                t.join()
+                for cameraInfo in cameras:
+                    if cameraInfo:
+                        t = threading.Thread(target=dwellTime.detectDwellTime, args=(cameraInfo,frameWidth, frameHeight,startTime, endCombineDate, url, imageFolderName, table ))
+                        t.start()  
+                        thr.append(t)  
+                for t in thr:
+                    t.join()
 
-            time.sleep(1)
+                time.sleep(1)
+                
     except Exception as e:
         logger.error(f"error in dwellTimeMain  {e}")
 
