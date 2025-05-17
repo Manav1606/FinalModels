@@ -30,33 +30,6 @@ def calculateDwellTime(id, allPeronPresentTime, allPersonsPresent, idTimeMapping
         logger.error(f"Error in calculateDwellTime: {e}")
         return 0
     
-def fetchStartTime():
-    try:
-        currentTime = datetime.now()
-        startTime = currentTime.time()
-        
-        if config["Dwell-Time"].get("startTime") is not None:
-            startTime = datetime.strptime(config["Dwell-Time"]["startTime"], "%H:%M:%S")
-        else:
-            config["Dwell-Time"]["startTime"] = startTime.strftime("%H:%M:%S")
-            
-        startDate = datetime.strptime(config["Dwell-Time"].get("startDate", currentTime.date().strftime("%Y-%m-%d")), "%Y-%m-%d")
-        endTime = datetime.strptime(config["Dwell-Time"].get("endTime", "23:59:59"), "%H:%M:%S")
-        endCombineDate = datetime.combine(startDate, endTime.time())
-        combineDate = datetime.combine(startDate, startTime.time())
-        
-        if endCombineDate < currentTime:
-            # saveDataInDB(fileName, rois, cameraInfo.get("camera_id"))
-            # sendPreviousData(ftp , folderName, url,booth, table)
-            combineDate = datetime.combine(currentTime.date(), startTime.time())
-        config["Dwell-Time"]["startDate"] = currentTime.date().strftime("%Y-%m-%d")
-        with open("config.ini", 'w') as configfile:
-                config.write(configfile)
-        return combineDate, endCombineDate 
-    except Exception as e:
-        logger.error(f"Error in fetchStartTime: {e}")
-        return None, None
-
 def saveDataInLocalDB(conn, api_data):
     try:
         cursor = conn.cursor
@@ -185,7 +158,7 @@ def sendPreviousData(folderName, url,booth, table = None):
         conn.close()
         return None
 
-def detectDwellTime(cameraInfo, frameWidth, frameHeight,startTime, endCombineDate, url, folderName, table = None):
+def detectDwellTime(cameraInfo, frameWidth, frameHeight,startTime, endTime, url, folderName, table = None):
     try:
         video , rois , cameraId = cameraInfo.get("rtsp_url"), cameraInfo.get("rois"), cameraInfo.get("camera_id")
         logger.info(f"started Camera {cameraId}")
@@ -197,8 +170,6 @@ def detectDwellTime(cameraInfo, frameWidth, frameHeight,startTime, endCombineDat
         coolDownTime = int(config["Dwell-Time"]["coolDownTime"])
         coolDown = coolDownTime
         
-        # startTime, endCombineDate = fetchStartTime()
-        # fileName = f"DualTime_{comp}_{exhibit}_{booth}_{datetime.now().date()}.json"
         
         model = YOLO("yolov8n.pt")
         cap = VideoCaptureBuffer(video)
@@ -219,7 +190,7 @@ def detectDwellTime(cameraInfo, frameWidth, frameHeight,startTime, endCombineDat
         alertAlreadyDone = {}
         syncTime = int(time.time())
         lastFrameTime =  datetime.now()
-        while datetime.now() >= startTime and datetime.now() < endCombineDate:
+        while datetime.now().time() >= startTime and datetime.now().time() < endTime:
             ret, frame = cap.read()
             if not ret:
                 cap.release()

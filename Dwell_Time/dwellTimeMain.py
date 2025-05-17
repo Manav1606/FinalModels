@@ -43,14 +43,15 @@ def dwellTimeMain():
             if datetime.now().minute % 10 == 0:
                 threading.Thread(target =  dwellTime.sendPreviousData, args = (imageFolderName, url,config["Company-Details"].get("booth_code")),kwargs={'table': table}).start()
                 
-            startTime, endCombineDate = dwellTime.fetchStartTime()
+            startTime = datetime.strptime(config["Dwell-Time"].get("startTime", "00:01:00"), "%H:%M:%S").time()
+            endTime = datetime.strptime(config["Dwell-Time"].get("endTime", "23:59:59"), "%H:%M:%S").time()
             
-            if datetime.now() >= startTime and datetime.now() < endCombineDate:
+            if datetime.now().time() >= startTime and datetime.now().time() < endTime:
                 thr = []
 
                 for cameraInfo in cameras:
                     if cameraInfo:
-                        t = threading.Thread(target=dwellTime.detectDwellTime, args=(cameraInfo,frameWidth, frameHeight,startTime, endCombineDate, url, imageFolderName, table ))
+                        t = threading.Thread(target=dwellTime.detectDwellTime, args=(cameraInfo,frameWidth, frameHeight,startTime, endTime, url, imageFolderName, table ))
                         t.start()  
                         thr.append(t)  
                 for t in thr:
