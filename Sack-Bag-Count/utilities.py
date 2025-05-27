@@ -7,6 +7,7 @@ from ftplib import FTP, all_errors
 import os
 from io import BytesIO
 import numpy as np
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -126,20 +127,30 @@ class setupFtp:
             logger.error("FTP connection is not established.")
             return 
 
-def saveDataInTxt(fileName,data):
+def saveDataInJson(fileName,data):
+    try:
 
-    if not fileName.endswith(".txt"):
-        logger.error(f"file Name is not a json")
+        if not fileName.endswith(".json"):
+            logger.error(f"file Name is not a json")
+            return
+        
+        if not data:
+            logger.error("data is emrpty")
+            return
+        
+        file_path = Path(fileName)
+        temp_path = file_path.with_suffix('.tmp')
+        
+        with open(temp_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+            f.flush()
+            os.fsync(f.fileno())
+        
+        os.replace(temp_path, file_path)
         return
-    
-    if not data:
-        logger.error("data is emrpty")
+    except Exception as e:
+        logger.error(f"Error in saveDataInJson: {e}")
         return
-    
-    file_path = Path(fileName)
-    with open(file_path, 'w') as f:
-            f.write(data)
-    return
 
 def uploadFileOnFtp(ftp,frame, ftpPath):
     try:
