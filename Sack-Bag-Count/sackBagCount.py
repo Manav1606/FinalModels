@@ -2,7 +2,7 @@ import utilities
 import configparser
 import os
 import logging
-import sackExceptions 
+from sackExceptions import sackExceptions 
 import time
 from ultralytics import YOLO
 import cv2
@@ -11,7 +11,7 @@ import json
 config_path = os.path.join(os.getcwd() ,"config.ini")
 config =  configparser.ConfigParser()
 config.read(config_path)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("sackBag_logger")
 
 def countSacks(objectsCoordinates, uncrossedLineSacks, crossedLineSacks, direction, point1, point2):
     try:
@@ -21,7 +21,8 @@ def countSacks(objectsCoordinates, uncrossedLineSacks, crossedLineSacks, directi
                     crossedLineSacks["loading"].append(id)
                     uncrossedLineSacks["loading"].remove(id)
                 else:
-                    uncrossedLineSacks["unLoading"].append(id)
+                    if id not in uncrossedLineSacks["unLoading"]:
+                        uncrossedLineSacks["unLoading"].append(id)
                     if id in crossedLineSacks["unLoading"]:
                         crossedLineSacks["unLoading"].remove(id)
             else:
@@ -29,7 +30,8 @@ def countSacks(objectsCoordinates, uncrossedLineSacks, crossedLineSacks, directi
                     uncrossedLineSacks["unLoading"].remove(id)
                     crossedLineSacks["unLoading"].append(id)
                 else:
-                    uncrossedLineSacks["loading"].append(id)
+                    if id not in uncrossedLineSacks["loading"]:
+                        uncrossedLineSacks["loading"].append(id)
                     if id in crossedLineSacks["loading"]:
                         crossedLineSacks["loading"].remove(id)  
                 # crossedLineSacks.append(id)
@@ -37,7 +39,7 @@ def countSacks(objectsCoordinates, uncrossedLineSacks, crossedLineSacks, directi
         logger.error(f"Error in countSacks: {e}")
         return None
 
-def sackBagCount(cameraId, bayNo, rtsp, direction, frameWidth, frameHeight,modelName,companyCode, storeCode,countLimit = 0, loi=None, roi=None):
+def sackBagCount(cameraId, bayNo, rtsp, direction, frameWidth, frameHeight,modelName,companyCode, storeCode, stopEvent, countLimit = 0, loi=None, roi=None, client = None):
     try:
         if rtsp:
             cap = utilities.VideoCaptureBuffer(rtsp)
@@ -57,7 +59,11 @@ def sackBagCount(cameraId, bayNo, rtsp, direction, frameWidth, frameHeight,model
         uncrossedLineSacks = {"loading": [], "unLoading": []}
         crossedLineSacks = {"loading": [], "unLoading": []}
         
-        while True:
+        while not stopEvent.is_set():
+            
+            if stopEvent.is_set():
+                logger.info("Stopping sackBagCount thread")
+                break
             ret, frame = cap.read()
             if not ret:
                 cap.release()
@@ -65,16 +71,22 @@ def sackBagCount(cameraId, bayNo, rtsp, direction, frameWidth, frameHeight,model
                 time.sleep(1)
                 continue
             frame = cv2.resize(frame, (frameWidth, frameHeight))
-            results =  model.track(frame,imgsz = 640, conf=0.2,persist=True, iou = 0.4, tracker = "bytetrack.yaml", verbose =False)
-            objectCoordinates = utilities.fetchObject(results, objects=[1], roi = roi)
-            if objectCoordinates is not None:
+            results =  model.track(frame,imgsz = 640, conf=0.3,persist=True, iou = 0.9, tracker = "bytetrack.yaml", verbose =False)
+            # frame = cv2.line(frame, (int(loi[0][0]),int(loi[0][1]) ), (int(loi[1][0]), int(loi[1][1])), color=(0, 255, 0), thickness=2)
+            objectCoordinates = utilities.fetchObject(results, objects=[0], roi = roi)
+            if objectCoordinates.get(0) is not None:
                 if loi is not None:
-                    countSacks(objectCoordinates,uncrossedLineSacks, crossedLineSacks, direction, loi[0], loi[1])
+                    countSacks(objectCoordinates.get(0),uncrossedLineSacks, crossedLineSacks, direction, loi[0], loi[1])
                     # publish data to MQTT broker
+                    publish = {}
                     data  = {
                         "unloadingSacks": len(crossedLineSacks["unLoading"]),
                         "loadingSacks": len(crossedLineSacks["loading"]),
                     }
+                    publish[bayNo] = data
+                    if client:
+                        client.publish("sack-bag-counter",json.dumps(publish))
+                        
                     utilities.saveDataInJson(fileName, data)
                 else:
                     raise sackExceptions(code = "SC-003", message = "Line of Interest (loi) not provided")

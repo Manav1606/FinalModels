@@ -8,8 +8,11 @@ import os
 from io import BytesIO
 import numpy as np
 import json
+import paho.mqtt.client as mqtt
+from paho.mqtt.client import CallbackAPIVersion
 
-logger = logging.getLogger(__name__)
+
+logger = logging.getLogger("sackBag_logger")
 
 class VideoCaptureBuffer:
     """Efficiently captures frames in a separate thread to reduce lag and distortion."""
@@ -127,6 +130,71 @@ class setupFtp:
             logger.error("FTP connection is not established.")
             return 
 
+class MQTTClient:
+    def __init__(self, client_id, broker='localhost', port=1883, keepalive=60):
+        self.client = mqtt.Client(client_id=client_id, protocol=mqtt.MQTTv311, transport="tcp", userdata=None, callback_api_version=CallbackAPIVersion.VERSION2)
+        self.broker = broker
+        self.port = port
+        self.keepalive = keepalive
+
+        # Assign default callbacks
+        self.client.on_connect = self.on_connect
+        self.client.on_message = self.on_message
+        self.client.on_disconnect = self.on_disconnect
+        self.client.on_subscribe = self.on_subscribe
+        self.client.on_publish = self.on_publish
+
+    # Connection to broker
+    def connect(self):
+        print(f"Connecting to {self.broker}:{self.port}")
+        self.client.connect(self.broker, self.port, self.keepalive)
+
+    # Start the client loop
+    def loop_forever(self):
+        self.client.loop_forever()
+
+    def loop_start(self):
+        self.client.loop_start()
+
+    def loop_stop(self):
+        self.client.loop_stop()
+
+    # Subscribe to a topic
+    def subscribe(self, topic, qos=0):
+        print(f"Subscribing to topic: {topic}")
+        self.client.subscribe(topic, qos)
+
+    # Publish a message
+    def publish(self, topic, payload, qos=0, retain=False):
+        print(f"Publishing to {topic}: {payload}")
+        self.client.publish(topic, payload, qos, retain, properties=None)
+
+    # Default callback for successful connection
+    def on_connect(self,client, userdata, flags, reason_code, properties =None):
+        print(f"Connected with result code: {reason_code}")
+
+    # Default callback for receiving a message
+    def on_message(self, client, userdata, msg):
+        print(f"Received message: '{msg.payload.decode()}' on topic: '{msg.topic}'")
+
+    # Callback when disconnected
+    def on_disconnect(self, client, userdata, DisconnectFlags, reason_code, properties =None):
+        print(f"Disconnected with result code: {reason_code}")
+
+    # Callback on subscribe
+    def on_subscribe(self, client, userdata, mid, granted_qos, reason_code, properties =None):
+        print(f"Subscribed with QoS: {granted_qos}")
+
+    def on_publish(self, client, userdata, mid, reason_code, properties =None):
+        print(f"Message published (mid: {mid})")
+
+    def set_on_message(self, callback):
+        self.client.on_message = callback
+
+    def set_on_connect(self, callback):
+        self.client.on_connect = callback
+
+
 def saveDataInJson(fileName,data):
     try:
 
@@ -193,16 +261,17 @@ def fetchObject(results, objects = [], roi = None):
         objectsCoordinates = {}
         for result in results:
             for j,box in enumerate(result.boxes):
-                    classId = box.cls[0]
+                    classId = int(box.cls[0].item())
                     if classId in objects and box.id is not None:
                         x, y, w, h = map(int, box.xywh[0])
-                        id = box.id
-                        objectsCoordinates[classId] = {}
+                        id = int(box.id.item())
+                        if classId not in objectsCoordinates:
+                            objectsCoordinates[classId] = {}
                         if roi is not None:
-                            if objectInsidePolygon(roi, {"x": x, "y": y}):
-                                objectsCoordinates[classId].update({id: (x, y)})
+                            if objectInsidePolygon(roi, (x,  y)):
+                                objectsCoordinates[classId][id] = (x, y)
                         else:
-                            objectsCoordinates[classId].update({id:(x,y)})
+                            objectsCoordinates[classId][id] = (x, y)
         return objectsCoordinates
     except Exception as e:
         logger.error(f"error in fetch Object {e}")
