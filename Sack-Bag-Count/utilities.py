@@ -10,6 +10,8 @@ import numpy as np
 import json
 import paho.mqtt.client as mqtt
 from paho.mqtt.client import CallbackAPIVersion
+import sqlite3
+import requests
 
 
 logger = logging.getLogger("sackBag_logger")
@@ -55,7 +57,17 @@ class VideoCaptureBuffer:
         self.thread.join()
         self.cap.release()
         
-
+class setupDB:
+    def __init__(self, table):
+        db_path = os.path.join(os.path.dirname(__file__), 'sackBag.db')
+        self.conn = sqlite3.connect(db_path)
+        self.cursor = self.conn.cursor()
+        self.cursor.execute(table)
+        self.commit
+    def commit(self):
+        self.conn.commit()
+    def close(self):
+        self.conn.close()
 
 class setupFtp:
     def __init__(self, userName, password, host, port, timeout = 10):
@@ -131,15 +143,17 @@ class setupFtp:
             return 
 
 class MQTTClient:
-    def __init__(self, client_id, broker='localhost', port=1883, keepalive=60):
+    def __init__(self, client_id, broker='localhost', port=1883, keepalive=60, topic = None, on_message=None):
         self.client = mqtt.Client(client_id=client_id, protocol=mqtt.MQTTv311, transport="tcp", userdata=None, callback_api_version=CallbackAPIVersion.VERSION2)
         self.broker = broker
         self.port = port
         self.keepalive = keepalive
+        self.topic = topic
+        self.lock = threading.Lock() 
 
         # Assign default callbacks
         self.client.on_connect = self.on_connect
-        self.client.on_message = self.on_message
+        self.client.on_message = on_message if on_message else self.on_message
         self.client.on_disconnect = self.on_disconnect
         self.client.on_subscribe = self.on_subscribe
         self.client.on_publish = self.on_publish
@@ -161,17 +175,21 @@ class MQTTClient:
 
     # Subscribe to a topic
     def subscribe(self, topic, qos=0):
-        print(f"Subscribing to topic: {topic}")
-        self.client.subscribe(topic, qos)
+        with self.lock:
+            print(f"Subscribing to topic: {topic}")
+            self.client.subscribe(topic, qos)
 
     # Publish a message
     def publish(self, topic, payload, qos=0, retain=False):
-        print(f"Publishing to {topic}: {payload}")
-        self.client.publish(topic, payload, qos, retain, properties=None)
+        with self.lock:
+            print(f"Publishing to {topic}: {payload}")
+            self.client.publish(topic, payload, qos, retain, properties=None)
 
     # Default callback for successful connection
     def on_connect(self,client, userdata, flags, reason_code, properties =None):
         print(f"Connected with result code: {reason_code}")
+        if reason_code == 0:
+            self.subscribe(self.topic,0) if self.topic else None
 
     # Default callback for receiving a message
     def on_message(self, client, userdata, msg):
@@ -231,8 +249,23 @@ def uploadFileOnFtp(ftp,frame, ftpPath):
     except Exception as e:
         logger.error(f"Error in uploadFileOnFtp: {e}")
         return False
+
+def sendRequest(url, data):
+    try:
+        headers = {
+            'content-type': 'application/json',
+        }
+        response = requests.post(url, json=data, headers=headers)
+        if response.status_code == 200:
+            logger.error(f"Data sent successfully to {url}")
+            return True
+        else:
+            logger.error(f"Error in sendRequest: {response.status_code} - {response.text}")
+            return False
+    except Exception as e:
+        logger.error(f"Error in sendRequest: {e}")
+        return False
     
-def point_position(a, b, p):
     try:
     # a, b, p = (x, y)
         cross = (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])
