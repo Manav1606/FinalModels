@@ -143,8 +143,8 @@ class setupFtp:
             return 
 
 class MQTTClient:
-    def __init__(self, client_id, broker='localhost', port=1883, keepalive=60, topic = None, on_message=None):
-        self.client = mqtt.Client(client_id=client_id, protocol=mqtt.MQTTv311, transport="tcp", userdata=None, callback_api_version=CallbackAPIVersion.VERSION2)
+    def __init__(self, client_id, broker='localhost', port=1883, keepalive=60, topic = None, on_message=None, transport = "tcp"):
+        self.client = mqtt.Client(client_id=client_id, protocol=mqtt.MQTTv311, transport=transport, userdata=None, callback_api_version=CallbackAPIVersion.VERSION2)
         self.broker = broker
         self.port = port
         self.keepalive = keepalive
@@ -240,6 +240,9 @@ def saveDataInJson(fileName,data):
 
 def uploadFileOnFtp(ftp,frame, ftpPath):
     try:
+        if ftp is None or not isinstance(ftp, setupFtp):
+            logger.error("Invalid FTP connection")
+            return False
         success, encoded_image = cv2.imencode('.jpg', frame)
         if success:
             image_bytes = encoded_image.tobytes()
@@ -250,21 +253,32 @@ def uploadFileOnFtp(ftp,frame, ftpPath):
         logger.error(f"Error in uploadFileOnFtp: {e}")
         return False
 
-def sendRequest(url, data):
+def sendRequest(url, data = None, method = "POST"):
     try:
         headers = {
             'content-type': 'application/json',
         }
-        response = requests.post(url, json=data, headers=headers)
+        if method == "POST":
+            response = requests.post(url, json=data, headers=headers)
+        else:
+            response = requests.get(url)
         if response.status_code == 200:
             logger.error(f"Data sent successfully to {url}")
-            return True
+            return {
+                "data": response.json(),
+                "status": 200
+            }
         else:
             logger.error(f"Error in sendRequest: {response.status_code} - {response.text}")
-            return False
+            return{
+                "data": response.json(),
+                "status": response.status_code
+            }
     except Exception as e:
         logger.error(f"Error in sendRequest: {e}")
-        return False
+        return {
+            "status": 500
+        }
     
     try:
     # a, b, p = (x, y)

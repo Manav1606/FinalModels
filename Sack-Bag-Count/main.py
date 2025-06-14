@@ -8,6 +8,8 @@ import queue
 import time
 import json
 from pathlib import Path
+import cv2
+import traceback
 
 # Load config
 config = configparser.ConfigParser()
@@ -36,47 +38,141 @@ queue_data = queue.Queue()
 thr = {}
 stopEvents = {}
   
-table = '''create table IF NOT EXISTS sackBag_Analytics 
-        (id INTEGER  primary key AUTOINCREMENT, companyCode varchar(40),storeCode VARCHAR(50),bayCode VARCHAR(50),
-        loadingCount int(10), unLoadingCount int(10), no_of_count int(10), vehicleNumber varchar(20), isCountIncorrect TINYINT,
-        firstFrameFilepath varchar(50), lastFrameFilepath varchar(50), countingStartTime timestamp, countingEndTime timestamp,
-            currentTime timeStamp Default current_timestamp)'''
+table = '''CREATE TABLE IF NOT EXISTS sackBag_Analytics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    companyCode VARCHAR(40),
+    storeCode VARCHAR(50),
+    bayCode VARCHAR(50),
+    loadingCount INTEGER,
+    unLoadingCount INTEGER,
+    noOfCounts INTEGER,
+    vehicleNumber VARCHAR(20),
+    isCountIncorrect TINYINT,
+    firstFrameFilepath VARCHAR(50),
+    lastFrameFilepath VARCHAR(50),
+    countingStartTime TIMESTAMP,
+    countingEndTime TIMESTAMP,
+    isAlertTriggerd BOOLEAN,
+    alertReason VARCHAR(40),
+    currentTime TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+'''
+            
 
 ftpInfo =  config["FTP"]
 sackAnalyticsUrl =  config["URLS"]["sackAnalytics"]
+bayInfoUrl = config["URLS"]["getBayDetails"]
+imageFolderName = f"sack_data/sack_bag_frames/"
+
+def sendPreviousDataOnCloud(ftpInfo, ftpFolder, imageFolderName, table = None, url = None):
+    try:
+        ftp = utilities.setupFtp(ftpInfo.get("username"), ftpInfo.get("password"), ftpInfo.get("host"), int(ftpInfo.get("port")))
+        if not ftp:
+            logger.error("FTP connection failed")
+            return
+        
+        if os.path.exists(imageFolderName):
+            for compSubfolder in os.listdir(imageFolderName):
+                compSubfolderPath = os.path.join(imageFolderName, compSubfolder)
+                for storeSubFolder in os.listdir(compSubfolderPath):
+                    storeSubfolderPath = os.path.join(compSubfolderPath, storeSubFolder)
+                    for baySubFolder in os.listdir(storeSubfolderPath):
+                        baySubfolderPath = os.path.join(storeSubfolderPath, baySubFolder)
+                        images = [file for file in os.listdir(baySubfolderPath) if file.endswith(('.jpg'))]
+                        ftp.ftp_mkdir_recursive(os.path.join(ftpFolder, compSubfolder, storeSubFolder, baySubFolder))
+                        for image in images:
+                            ftpImageLocation  = f"{ftpFolder}/{compSubfolder}/{storeSubFolder}/{baySubFolder}/{image}"
+                            frame  = cv2.imread(os.path.join(baySubfolderPath, image))
+                            ftpres = utilities.uploadFileOnFtp(ftp, frame, ftpImageLocation)
+                            if ftpres:
+                                os.remove(os.path.join(baySubfolderPath, image))
+                            else:
+                                if ftp is not None:
+                                    ftp.close()
+                                ftp.connect()
+                        if not os.listdir(baySubfolderPath):
+                            os.rmdir(baySubfolderPath)
+                    if not os.listdir(storeSubfolderPath):
+                        os.rmdir(storeSubfolderPath)
+                if not os.listdir(compSubfolderPath):
+                    os.rmdir(compSubfolderPath)
+        
+        if ftp is not None:
+            ftp.close()    
+            
+        try:
+            conn = utilities.setupDB(table)
+        except Exception as e:
+            logger.error(f"Error in setupDB: {e}")
+            
+        if conn:
+            cusor = conn.cursor
+            cusor.execute('''select * from sackBag_Analytics''')
+            allPreviousData = cusor.fetchall()
+            if allPreviousData:
+                for data in allPreviousData:
+                    apiData = {
+                        "company_code": data[1],
+                        "store_code": data[2],
+                        "bay_code": data[3],
+                        "loading_count": data[4],
+                        "unloading_count": data[5],               
+                        "no_of_counts": data[6],
+                        "vehicle_number": data[7],
+                        "is_count_incorrect": data[8],
+                        "first_frame": data[9],
+                        "last_frame": data[10],
+                        "counting_start_time": data[11],
+                        "counting_end_time": data[12],
+                        "is_alert_triggered": data[13],
+                        "alert_reason": data[14]
+                    }
+                    res = utilities.sendRequest(url, apiData)
+                    if res.get("status") ==  200:
+                        cusor.execute('''delete from sackBag_Analytics where id = ?''', (data[0],))
+                        conn.commit()
+            conn.close()
+                
+    except Exception as e:
+        logger.error("Error in sendPreviousDataOnCloud:\n" + traceback.format_exc())
+
+    return
+
 
 def countSackBags(bayDetails):
     try:
         stopEvent = threading.Event()
         bayNo = bayDetails.get("bayNo")
-        rtsp = "C:/Users/manav/Downloads/heatMap/Sack-Bag-Count/sack18.mp4"
-        direction = "left"
         frameWidth = 960
         frameHeight = 640
-        modelName = "best.pt"
+        urlWithParam =  f"{bayInfoUrl}/{bayNo}"
+        res = utilities.sendRequest(urlWithParam, method= "GET")
+        if res.get("status") != 200:
+            client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "Error Not started Yet", "statusCode" : 400}))
+        else:
+            rtsp = "C:/Users/manav/Downloads/heatMap/Sack-Bag-Count/sack18.mp4"
+            data = res.get("data")
+            # rtsp = data.get("rtsp_url")
+            direction = data.get("loading_direction")
+            modelName = "12.9klocal.pt"
 
-        loi = [(437.5, 282.4), (797.5, 417.4)]
-        roi = [
-            {"x": 452.5, "y": 218.4},
-            {"x": 313.5, "y": 465.4},
-            {"x": 726.5, "y": 575.4},
-            {"x": 814.5, "y": 253.4},
-            {"x": 452.5, "y": 218.4},
-        ]
-        
-        t = threading.Thread(
-            target=sackBagCount.sackBagCount,
-            args=(bayDetails, rtsp, direction, frameWidth, frameHeight, modelName, stopEvent, ftpInfo, sackAnalyticsUrl),
-            kwargs={"loi": loi, "roi": roi, "client": client, "table" :table}
-        )
-        thr[bayNo] = t
-        stopEvents[bayNo] = stopEvent
-        logger.info(f"Starting thread for bay {bayNo}")
-        t.start()
-        client.publish("bay/sack/status", json.dumps({"bayNo": bayNo, "status": "started"}))
+            loi = data.get("loi")
+            roi = data.get("roi")
+            
+            t = threading.Thread(
+                target=sackBagCount.sackBagCount,
+                args=(bayDetails, rtsp, direction, frameWidth, frameHeight, modelName, stopEvent, ftpInfo, sackAnalyticsUrl),
+                kwargs={"loi": loi, "roi": roi, "client": client, "table" :table}
+            )
+            thr[bayNo] = t
+            stopEvents[bayNo] = stopEvent
+            logger.info(f"Starting thread for bay {bayNo}")
+            t.start()
+            client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "started", "statusCode" : 200}))
 
     except Exception as e:
         logger.error(f"Error in countSackBags: {e}")
+        client.publish("bay/sack/status", json.dumps({"bayNo": bayNo, "status": "Error Not started Yet"}))
 
 def close(bayNo):
     try:
@@ -88,7 +184,7 @@ def close(bayNo):
                 stop_event.set()
             thread.join(timeout=5)
             logger.info(f"Thread for bay {bayNo} has been closed.")
-            client.publish("bay/sack/status", json.dumps({"bayNo": bayNo, "status": "stopped"}))
+            client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "stopped", "statusCode": 200}))
 
         thr.pop(bayNo, None)
         stopEvents.pop(bayNo, None)
@@ -110,10 +206,14 @@ def startCounting():
             data = read_json_file(filepath)
             for bayDetail in data.get("start", []):
                 bayNo = bayDetail.get("bayNo")
-                if bayNo not in thr:
+                if bayDetail.get("isCheck") == 1 and bayNo in thr:
+                    client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "already running", "statusCode": 201}))
+                elif bayDetail.get("isCheck") == 1 and bayNo not in thr:
+                    client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "Not running", "statusCode": 202}))
+                elif bayNo not in thr and bayDetail.get("isCheck") == 0:
                     countSackBags(bayDetail)
                 else:
-                    client.publish("bay/sack/status", json.dumps({"bayNo": bayNo, "status": "already running"}))
+                    client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "already running", "statusCode": 201}))
 
                 data["start"] = [entry for entry in data.get("start", []) if entry.get("bayNo") != bayNo]
                 utilities.saveDataInJson(filepath, data)
@@ -131,10 +231,14 @@ def stopCounting():
             data = read_json_file(filepath)
             for bayDetail in data.get("stop", []):
                 bayNo = bayDetail.get("bayNo")
-                if bayNo in thr:
+                if bayDetail.get("isCheck") == 1 and bayNo not in thr:
+                    client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "not running", "statusCode": 202})) 
+                elif bayDetail.get("isCheck") == 1 and bayNo in thr:
+                    client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "already running", "statusCode": 201}))  
+                elif bayNo in thr and bayDetail.get("isCheck") == 0:
                     close(bayNo)
                 else:
-                    client.publish("bay/sack/status", json.dumps({"bayNo": bayNo, "status": "not running"}))
+                    client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "not running", "statusCode": 202}))
 
                 # Clean up the stop entry
                 data["stop"] = [entry for entry in data.get("stop", []) if entry.get("bayNo") != bayNo]
@@ -148,15 +252,23 @@ def stopCounting():
 
 # === MAIN EXECUTION ===
 if __name__ == "__main__":
-    client = utilities.MQTTClient(client_id="publishers", on_message=on_message)
+    mqtt = config["MQTT"]
+    client = utilities.MQTTClient(client_id=mqtt["clientId"], broker = mqtt["broker"], on_message=on_message, transport=mqtt["transport"])
     client.connect()
     client.loop_start()
 
     threading.Thread(target=startCounting, daemon=True).start()
     threading.Thread(target=stopCounting, daemon=True).start()
-
+    syncTime = int(time.time())
+    
     try:
         while True:
+            try:
+                if int(time.time()) - syncTime > 600:
+                    sendPreviousDataOnCloud(ftpInfo, ftpInfo.get("ftp_location"), imageFolderName, table=table, url=sackAnalyticsUrl)
+                    syncTime = int(time.time())
+            except Exception as e:
+                continue
             time.sleep(1)
     except KeyboardInterrupt:
         logger.info("Shutting down MQTT client...")
