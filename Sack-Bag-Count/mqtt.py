@@ -7,6 +7,7 @@ import os
 import logging
 import queue
 import time 
+import configparser
 
 log_filename = f"sackMqttt.log"
 log_filepath = os.path.join(os.getcwd(), log_filename)
@@ -18,6 +19,11 @@ if not logger.handlers:
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
+
+config = configparser.ConfigParser()
+config_path = os.path.join(os.getcwd(), "config.ini")
+if os.path.exists(config_path):
+    config.read(config_path)
 
 queue_data = queue.Queue()
 
@@ -168,7 +174,8 @@ def on_message(client, userdata, message):
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    client = MQTTClient(client_id="test_client",broker = "192.168.10.117", topic="sack/bag/status", on_message=on_message, transport="websockets")
+    mqttInfo  = config["MQTT"]
+    client = MQTTClient(client_id="test_client",broker = mqttInfo.get("broker"), topic="sack/bag/status", port = int(mqttInfo.get("port")), on_message=on_message, transport=mqttInfo.get("transport"))
     
     client.connect()
     client.loop_start()

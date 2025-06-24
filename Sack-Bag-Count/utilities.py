@@ -255,6 +255,7 @@ def uploadFileOnFtp(ftp,frame, ftpPath):
 
 def sendRequest(url, data = None, method = "POST"):
     try:
+        logger.info(f"data {data}")
         headers = {
             'content-type': 'application/json',
         }

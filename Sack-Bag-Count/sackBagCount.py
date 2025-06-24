@@ -10,13 +10,14 @@ import json
 from datetime import datetime
 import traceback
 import numpy as np
+import main
+import threading
 
 config_path = os.path.join(os.getcwd() ,"Sack-Bag-Count","config.ini")
 config =  configparser.ConfigParser()
 config.read(config_path)
 logger = logging.getLogger("sackBag_logger")
 
-startTime = None
 
 def countSacks(objectsCoordinates, uncrossedLineSacks, crossedLineSacks, direction, point1, point2):
     try:
@@ -79,7 +80,8 @@ def uploadDataOnCloud(
     ftpInfo, folderName, imageName, frame, imageFolderName, 
     bayDetail,  isClosed = False, table = None, 
     loadingCount = 0, unLoadingCount = 0, isCountIncorrect = False,
-    url = None, triggerAlert = 0
+    url = None, triggerAlert = 0, startTime = datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+    alertReason  = "Count limit exceeded"
     ):
     try:
         fileName = f"{folderName}/{imageName}"
@@ -103,31 +105,30 @@ def uploadDataOnCloud(
 
             if ftp is not None:
                 ftp.close()
-            
-        if not isClosed:
+        if not isClosed and triggerAlert:
+            apiData = {
+                        "company_code": bayDetail.get("companyCode"),
+                        "store_code": bayDetail.get("storeCode"),
+                        "bay_code": bayDetail.get("bayNo"),
+                        "counting_start_time": startTime,
+                        "is_alert_triggered": True,
+                        "alert_reason": alertReason
+                    }   
+        elif not isClosed:
             apiData = {
                 "company_code": bayDetail.get("companyCode"),
                 "store_code": bayDetail.get("storeCode"),
-                "bay_code": bayDetail.get("bayCode"),
-                "no_of_counts": bayDetail.get("noOfCounts", 0),
+                "bay_code": bayDetail.get("bayNo"),
+                "no_of_counts": bayDetail.get("counter", 0),
                 "vehicle_number": bayDetail.get("vehicleNumber", None),
                 "first_frame": f"ftp://ftp.ttpltech.in//{fileName}",
                 "counting_start_time": startTime,
             }
-        elif not isClosed and triggerAlert:
-            apiData = {
-                        "company_code": bayDetail.get("companyCode"),
-                        "store_code": bayDetail.get("storeCode"),
-                        "bay_code": bayDetail.get("bayCode"),
-                        "counting_start_time": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
-                        "is_alert_triggered": True,
-                        "alert_reason": "Count limit exceeded"
-                    }
         else:
             apiData = {
                 "company_code": bayDetail.get("companyCode"),
                 "store_code": bayDetail.get("storeCode"),
-                "bay_code": bayDetail.get("bayCode"),
+                "bay_code": bayDetail.get("bayNo"),
                 "loading_count": loadingCount,
                 "unloading_count": unLoadingCount,
                 "is_count_incorrect": isCountIncorrect,
@@ -149,13 +150,17 @@ def uploadDataOnCloud(
         return None
     return
 
-def sackBagCount(bayDetails, rtsp, direction, frameWidth, frameHeight,modelName, stopEvent,ftpInfo , sackAnalyticsUrl, countLimit = 0, loi=None, roi=None, client = None, table = None):
+def sackBagCount(bayDetails, rtsp, direction, frameWidth, frameHeight,modelName, stopEvent,ftpInfo , sackAnalyticsUrl, loi=None, roi=None, client = None, table = None):
     try:
         logger.info("starting sackBagCount thread")
         
         bayNo = bayDetails.get("bayNo")
         companyCode = bayDetails.get("companyCode")
         storeCode = bayDetails.get("storeCode")
+        
+        countLimit = ""
+        if bayDetails.get("counter") != "":
+            countLimit = int(bayDetails.get("counter"))
         startTime = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
         
         if not os.path.exists("sack_data"):
@@ -185,10 +190,15 @@ def sackBagCount(bayDetails, rtsp, direction, frameWidth, frameHeight,modelName,
                 else:
                     try:
                         imageName = f"first_frame_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-                        uploadDataOnCloud(
-                            ftpInfo, ftpFolder, imageName, frame, imageFolderName, 
-                            bayDetails, table = table, url = sackAnalyticsUrl,
-                        )
+                        threading.Thread(target = uploadDataOnCloud, args = (ftpInfo, ftpFolder, imageName, frame, imageFolderName, 
+                            bayDetails), kwargs = {"table": table, "url" : sackAnalyticsUrl,
+                            "startTime" : startTime} ).start()
+                        
+                        # uploadDataOnCloud(
+                        #     ftpInfo, ftpFolder, imageName, frame, imageFolderName, 
+                        #     bayDetails, table = table, url = sackAnalyticsUrl,
+                        #     startTime= startTime
+                        # )
                         break
                         
                     except Exception as e:
@@ -233,12 +243,17 @@ def sackBagCount(bayDetails, rtsp, direction, frameWidth, frameHeight,modelName,
                 if loi is not None:
                     countSacks(objectCoordinates.get(0),uncrossedLineSacks, crossedLineSacks, direction, loi[0], loi[1])
                     # publish data to MQTT broker
-                    if not alertTriggered  and (len(crossedLineSacks["unLoading"]) >= countLimit or crossedLineSacks["loading"] >= countLimit):
-                        uploadDataOnCloud(
-                            None, None, None, None, None, 
-                            bayDetails, table = table, url = sackAnalyticsUrl,
-                            triggerAlert = 1
-                        )
+                    if not alertTriggered and countLimit != "" and (len(crossedLineSacks["unLoading"]) > countLimit or len(crossedLineSacks["loading"]) > countLimit):
+                        threading.Thread(target = uploadDataOnCloud, args = (None, None, None, None, None, 
+                            bayDetails), kwargs = {"table": table, "url" : sackAnalyticsUrl,
+                            "startTime" : startTime, "triggerAlert" : 1} ).start()
+                        logger.info("alert Triggered")
+                        # uploadDataOnCloud(
+                        #     None, None, None, None, None, 
+                        #     bayDetails, table = table, url = sackAnalyticsUrl,
+                        #     triggerAlert = 1,
+                        #     startTime= startTime
+                        # )
                         alertTriggered = 1
                         
                     publish = {}
@@ -254,7 +269,7 @@ def sackBagCount(bayDetails, rtsp, direction, frameWidth, frameHeight,modelName,
                         # print("publish")
                         client.publish("sack/bag/counter",json.dumps(publish))
                         
-                    utilities.saveDataInJson(fileName, data)
+                    # utilities.saveDataInJson(fileName, data)
                 else:
                     raise sackExceptions(code = "SC-003", message = "Line of Interest (loi) not provided")
                 # post alert if countLimit is reached in api
@@ -264,16 +279,33 @@ def sackBagCount(bayDetails, rtsp, direction, frameWidth, frameHeight,modelName,
                 break
             
         lastImageName = f"last_frame_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-        uploadDataOnCloud(
-            ftpInfo, ftpFolder, lastImageName, 
-            frame, imageFolderName, bayDetails, isClosed=True, table=table,
-            loadingCount=len(crossedLineSacks["loading"]), unLoadingCount=len(crossedLineSacks["unLoading"]),
-            isCountIncorrect=False, url=sackAnalyticsUrl
-        )
+        isCountIncorrect =  True
+        if countLimit == len(crossedLineSacks["unLoading"]) or countLimit == len(crossedLineSacks["loading"]):
+            isCountIncorrect = False
+            
+        if not alertTriggered  and countLimit != "" and countLimit > len(crossedLineSacks["unLoading"]) or countLimit > len(crossedLineSacks["loading"]):
+            threading.Thread(target = uploadDataOnCloud, args = (None, None, None, None, None, 
+                            bayDetails), kwargs = {"table": table, "url" : sackAnalyticsUrl,
+                            "startTime" : startTime, "triggerAlert" : 1, "alertReason" : "count less than Count Limit"} ).start()
+            
+        threading.Thread(target = uploadDataOnCloud, args = (ftpInfo, ftpFolder, lastImageName, frame, imageFolderName,
+                            bayDetails), kwargs = {"table": table, "isClosed": True, "url" : sackAnalyticsUrl,
+                                                   "loadingCount" : len(crossedLineSacks["loading"]), "unLoadingCount" :len(crossedLineSacks["unLoading"]),
+                            "startTime" : startTime, "isCountIncorrect" :isCountIncorrect} ).start()
+        # uploadDataOnCloud(
+        #     ftpInfo, ftpFolder, lastImageName, 
+        #     frame, imageFolderName, bayDetails, isClosed=True, table=table,
+        #     loadingCount=len(crossedLineSacks["loading"]), unLoadingCount=len(crossedLineSacks["unLoading"]),
+        #     isCountIncorrect=False, url=sackAnalyticsUrl, startTime= startTime
+        # )
         cv2.destroyWindow(f"frame{bayNo}")      
     except sackExceptions as e:
         logger.error(e)
+        main.close(bayNo)
+        client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "stop due to some error", "statusCode": 400}))
         return None
     except Exception as e:
-        logger.error(f"Error in sackBagCount: {e}")
+        logger.error("Error in sackBagCount" + traceback.format_exc())
+        main.close(bayNo)
+        client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "stop due to some error", "statusCode": 400}))
         return None
