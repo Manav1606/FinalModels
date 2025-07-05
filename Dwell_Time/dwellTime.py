@@ -43,41 +43,44 @@ def saveDataInLocalDB(conn, api_data):
         logger.error(f"Error in saveDataInLocalDB: {e}")
         conn.close()
         return False
-    
-def sendData(folderName, url, frame, comp, exhinbit, booth, camId,alertType = "dwellTime",  table = None):
+def sendData(folderName, url, frame, comp, exhinbit, booth, camId,alertType = "dwellTime",  table = None, waitingTimeData = None):
     try:
         if alertType == "dwellTime":
             alertType = 9
             alertName = "dwellTime"
+        elif alertType == "waitingTime":
+            alertType = 10
+            alertName = "waitingTime"
         else:
             alertType = 3
             alertName = "staff_absent"
-        
-        try:      
-            ftp = setupFtp(config["FTP"]["userName"], config["FTP"]["password"], config["FTP"]["host"], int(config["FTP"]["port"]))
-        except Exception as e:
-            logger.error(f"error in making directory {e}") 
-               
-        timeStamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
-        ftpFileName  = f"{comp}_{exhinbit}_{booth}_{timeStamp}_{camId}_{alertName}.jpg"
-        ftpPath = config["FTP"].get("ftp_location")
-        ftpLocation = os.path.join(ftpPath,booth, datetime.now().date().strftime("%Y-%m-%d"), ftpFileName)
-        created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
-        ftpRes = util.uploadFileOnFtp(ftp, frame, ftpLocation)
-        if not ftpRes:
-            logger.error("Error in uploadFileOnFtp")
-            subFolderName = f"{folderName}/{datetime.now().date()}"
-            if not os.path.exists(subFolderName):
-                os.makedirs(subFolderName)
-            imagePath = f"{subFolderName}/{ftpFileName}"
-            success = cv2.imwrite(imagePath, frame)
-            if success:
-                logger.error(f"Image saved to {imagePath}")
-            else:
-                logger.error(f"Failed to save image to {imagePath}")
             
-        if ftp is not None:
-            ftp.close()
+        if frame:
+            try:      
+                ftp = setupFtp(config["FTP"]["userName"], config["FTP"]["password"], config["FTP"]["host"], int(config["FTP"]["port"]))
+            except Exception as e:
+                logger.error(f"error in making directory {e}") 
+                
+            timeStamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
+            ftpFileName  = f"{comp}_{exhinbit}_{booth}_{timeStamp}_{camId}_{alertName}.jpg"
+            ftpPath = config["FTP"].get("ftp_location")
+            ftpLocation = os.path.join(ftpPath,booth, datetime.now().date().strftime("%Y-%m-%d"), ftpFileName)
+            created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
+            ftpRes = util.uploadFileOnFtp(ftp, frame, ftpLocation)
+            if not ftpRes:
+                logger.error("Error in uploadFileOnFtp")
+                subFolderName = f"{folderName}/{datetime.now().date()}"
+                if not os.path.exists(subFolderName):
+                    os.makedirs(subFolderName)
+                imagePath = f"{subFolderName}/{ftpFileName}"
+                success = cv2.imwrite(imagePath, frame)
+                if success:
+                    logger.error(f"Image saved to {imagePath}")
+                else:
+                    logger.error(f"Failed to save image to {imagePath}")
+                
+            if ftp is not None:
+                ftp.close()
                         
         api_data = {
             "company_code": comp,
@@ -85,10 +88,20 @@ def sendData(folderName, url, frame, comp, exhinbit, booth, camId,alertType = "d
             "booth_code": booth,
             "alert_type": alertType,
             "dateandtime": created_at,
-            "filepath": f"ftp://ftp.ttpltech.in//{ftpLocation}",
-            "mime_type": "image/jpg",
-            "alert_status": "pending",
         }
+        
+        if alertType == "waitingTime":
+            api_data.update({
+                "alert_type": alertType,
+                "remark": waitingTimeData,
+            })
+        else:
+            api_data.update({
+                "filepath": f"ftp://ftp.ttpltech.in//{ftpLocation}",
+                "mime_type": "image/jpg",
+                "alert_status": "pending",
+            })
+            
         res = util.sendRequest(url, api_data)
         if not res:
             try:
@@ -158,9 +171,24 @@ def sendPreviousData(folderName, url,booth, table = None):
         conn.close()
         return None
 
+def sendInactivePersonsWaitingTime(personIds, allPeronPresentTime, comp, exhibit, booth, camId, url = None, table = None):
+    try:
+        if not personIds:
+            return None
+        
+        inactivePersons = { id: allPeronPresentTime.get(id) for id in allPeronPresentTime.keys() if id not in personIds and allPeronPresentTime.get(id) > 25}
+        for id in inactivePersons.keys():
+            allPeronPresentTime.pop(id, None)
+        if not inactivePersons:
+            return 
+        sendData(None, url, None, comp, exhibit, booth, camId, alertType= "waitingTime", table = table)
+    except Exception as e:
+        logger.error(f"Error in sendInactivePersonsWaitingTime: {e}")
+        return None
+
 def detectDwellTime(cameraInfo, frameWidth, frameHeight,startTime, endTime, url, folderName, table = None):
     try:
-        video , rois , cameraId = cameraInfo.get("rtsp_url"), cameraInfo.get("rois"), cameraInfo.get("camera_id")
+        video , rois , cameraId, cameraName = cameraInfo.get("rtsp_url"), cameraInfo.get("rois"), cameraInfo.get("camera_id"), cameraInfo.get("camera_name")
         logger.info(f"started Camera {cameraId}")
         comp, exhibit, booth = config["Company-Details"].get("company_code"), config["Company-Details"].get("exhibition_code"), config["Company-Details"].get("booth_code")
         
@@ -240,10 +268,15 @@ def detectDwellTime(cameraInfo, frameWidth, frameHeight,startTime, endTime, url,
                         personTime = 0
                         if int(classId) == 0 and box.id is not None:
                             x, y, w, h = map(int, box.xywh[0])
-                            if util.personInsidePolygon(rois.get(roi), (x, y)) and roi == "dwellTime":
+                            if util.personInsidePolygon(rois.get(roi), (x, y)) and (roi == "dwellTime" or roi == "waitingTime"):
                                 id = box.id[0].item()
                                 personIds.append(id)
                                 personTime = calculateDwellTime(id, allPeronPresentTime[roi], allPersonsPresent[roi], idTimeMapping[roi], incTime)
+                                # calculate person Time and store in the file and send it to the api or if we want to store then send all allpersonTime to api
+                                if roi == "waitingTime":
+                                    threading.Thread(
+                                        target=sendInactivePersonsWaitingTime, args = (personIds, allPeronPresentTime[roi], comp, exhibit, booth, cameraId ), kwargs = {'table': table, 'url': url})
+                                    
                                 if personTime > timeThresholdForDwellTime:
                                     if id not in alertAlreadyDone[roi]:
                                         x, y, top_left,bottom_right  = util.fetchTextScale(int(rois.get(roi)[2]["x"]), int(rois.get(roi)[2]["y"]), text = f"Time(in sec): {int(personTime)}" )
