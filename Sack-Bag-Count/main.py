@@ -154,7 +154,7 @@ def countSackBags(bayDetails):
             data = res.get("data")
             # rtsp = data.get("rtsp_url")
             direction = data.get("loading_direction")
-            modelName = "12.9klocal.pt"
+            modelName = "sackbag_75epochs_270625.pt"
 
             loi = data.get("loi")
             roi = data.get("roi")
@@ -168,7 +168,7 @@ def countSackBags(bayDetails):
             stopEvents[bayNo] = stopEvent
             logger.info(f"Starting thread for bay {bayNo}")
             t.start()
-            client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "started", "statusCode" : 200}))
+            # client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "started", "statusCode" : 200}))
 
     except Exception as e:
         logger.error(f"Error in countSackBags: {e}")

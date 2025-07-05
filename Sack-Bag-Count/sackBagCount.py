@@ -220,7 +220,8 @@ def sackBagCount(bayDetails, rtsp, direction, frameWidth, frameHeight,modelName,
         alertTriggered = 0
         
         # fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        # out = cv2.VideoWriter('sack_bag_detection_best.mp4', fourcc, 25.0, (frameWidth, frameHeight))
+        # out = cv2.VideoWriter('sack_bag_detection_count.mp4', fourcc, 25.0, (frameWidth, frameHeight))
+        client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "started", "statusCode" : 200}))
         
         while not stopEvent.is_set():
             
@@ -238,10 +239,10 @@ def sackBagCount(bayDetails, rtsp, direction, frameWidth, frameHeight,modelName,
             frame = cv2.resize(frame, (frameWidth, frameHeight))
             results =  model.track(frame,imgsz = 640, conf=0.2,persist=True, iou = 0.4, tracker = "bytetrack.yaml", verbose =False)
             frame = cv2.line(frame, (int(loi[0][0]),int(loi[0][1]) ), (int(loi[1][0]), int(loi[1][1])), color=(0, 255, 0), thickness=2)
-            objectCoordinates = utilities.fetchObject(results, objects=[0], roi = roi)
-            if objectCoordinates.get(0) is not None:
+            objectCoordinates = utilities.fetchObject(results, objects=[1], roi = roi)
+            if objectCoordinates.get(1) is not None:
                 if loi is not None:
-                    countSacks(objectCoordinates.get(0),uncrossedLineSacks, crossedLineSacks, direction, loi[0], loi[1])
+                    countSacks(objectCoordinates.get(1),uncrossedLineSacks, crossedLineSacks, direction, loi[0], loi[1])
                     # publish data to MQTT broker
                     if not alertTriggered and countLimit != "" and (len(crossedLineSacks["unLoading"]) > countLimit or len(crossedLineSacks["loading"]) > countLimit):
                         threading.Thread(target = uploadDataOnCloud, args = (None, None, None, None, None, 
