@@ -35,8 +35,8 @@ def dwellTimeMain():
         imageFolderName = f"DwellTime"
         table = '''create table IF NOT EXISTS DwellTime_Ananlytics 
             (id INTEGER  primary key AUTOINCREMENT,companyCode varchar(40),exhibitionCode VARCHAR(50),boothCode VARCHAR(50) ,
-            alertType int(10), filepath varchar(50),mimeType varchar(20), alert_status varchar(20), remark varchar(1000),
-            dateandtime timestamp , currentTime timeStamp Default current_timestamp)'''
+            alertType int(10), filepath varchar(50),mimeType varchar(20), alert_status varchar(20),
+            dateandtime timestamp , remark varchar(5000), currentTime timeStamp Default current_timestamp)'''
         
         while True:
             
