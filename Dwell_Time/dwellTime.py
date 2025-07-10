@@ -37,7 +37,7 @@ def saveDataInLocalDB(conn, api_data):
         cursor.execute('''INSERT INTO DwellTime_Ananlytics (companyCode, exhibitionCode, boothCode, alertType, filepath, mimeType, alert_status, dateandtime, remark) 
                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''', 
                           (api_data["company_code"], api_data["exhibition_code"], api_data["booth_code"], api_data["alert_type"], 
-                           api_data["filepath"], api_data.get("mime_type", ""), api_data.get("alert_status", ""), api_data["dateandtime"], api_data.get("remark", "")))
+                           api_data.get("filepath", ""), api_data.get("mime_type", ""), api_data.get("alert_status", ""), api_data["dateandtime"], api_data.get("remark", "")))
         conn.commit()
         conn.close()
     except Exception as e:
@@ -50,12 +50,14 @@ def sendData(folderName, url, frame, comp, exhinbit, booth, camId,alertType = "d
             alertType = 9
             alertName = "dwellTime"
         elif alertType == "waitingTime":
-            alertType = 2011
+            alertType = 12
             alertName = "waitingTime"
         else:
             alertType = 3
             alertName = "staff_absent"
             
+        created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
+        ftpLocation = None
         if frame is not None:
             try:      
                 ftp = setupFtp(config["FTP"]["userName"], config["FTP"]["password"], config["FTP"]["host"], int(config["FTP"]["port"]))
@@ -66,7 +68,6 @@ def sendData(folderName, url, frame, comp, exhinbit, booth, camId,alertType = "d
             ftpFileName  = f"{comp}_{exhinbit}_{booth}_{timeStamp}_{camId}_{alertName}.jpg"
             ftpPath = config["FTP"].get("ftp_location")
             ftpLocation = os.path.join(ftpPath,booth, datetime.now().date().strftime("%Y-%m-%d"), ftpFileName)
-            created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
             ftpRes = util.uploadFileOnFtp(ftp, frame, ftpLocation)
             if not ftpRes:
                 logger.error("Error in uploadFileOnFtp")
@@ -92,7 +93,7 @@ def sendData(folderName, url, frame, comp, exhinbit, booth, camId,alertType = "d
             "alert_status": "pending",
         }
         
-        if alertType == "waitingTime":
+        if alertName == "waitingTime":
             api_data.update({
                 "remark": waitingTimeData,
             })
@@ -172,7 +173,7 @@ def sendPreviousData(folderName, url,booth, table = None):
         conn.close()
         return None
 
-def sendInactivePersonsWaitingTime(personIds, allPeronPresentTime, comp, exhibit, booth, camId, url = None, table = None):
+def sendInactivePersonsWaitingTime(personIds, allPeronPresentTime, comp, exhibit, booth, camId, url = None, table = None, activeIds = {}, fps = 30):
     try:
         if not personIds:
             return None
@@ -181,12 +182,18 @@ def sendInactivePersonsWaitingTime(personIds, allPeronPresentTime, comp, exhibit
         allIds = []
         for id in allPeronPresentTime.keys():
             if id not in personIds and allPeronPresentTime.get(id) > 25:
-                inactivePersons[id] = allPeronPresentTime.get(id)
-                allIds.append(id)
+                if activeIds.get(id) is not None and int(activeIds.get(id)) > fps:
+                    inactivePersons[id] = allPeronPresentTime.get(id)
+                    allIds.append(id)
+                else:
+                    if activeIds.get(id) is None:
+                        activeIds[id] = 0
+                    activeIds[id] += 1/fps
         # inactivePersons = { id: allPeronPresentTime.get(id) for id in allPeronPresentTime.keys() if id not in personIds and allPeronPresentTime.get(id) > 25}
         for id in allIds:
             if id not in personIds:
                 allPeronPresentTime.pop(id, None)
+                activeIds.pop(id, None)
         # for id in inactivePersons.keys():
         #     allPeronPresentTime.pop(id, None)
         if inactivePersons == {}:
@@ -198,7 +205,7 @@ def sendInactivePersonsWaitingTime(personIds, allPeronPresentTime, comp, exhibit
                 "camera_id": camId,
                 "Waiting_time_seconds": int(inactivePersons[id]),
             })
-        threading.Thread(sendData, args = (None, url, None, comp, exhibit, booth, camId), kwargs= {'alertType' :"waitingTime", 'table' : table, 'waitingTimeData' : json.dumps(inactivePersons)}).start()
+        threading.Thread(target = sendData, args = (None, url, None, comp, exhibit, booth, camId), kwargs= {'alertType' :"waitingTime", 'table' : table, 'waitingTimeData' : json.dumps(waitingTimeData)}).start()
         # sendData(None, url, None, comp, exhibit, booth, camId, alertType= "waitingTime", table = table, waitingTimeData = json.dumps(inactivePersons))
     except Exception as e:
         logger.error(f"Error in sendInactivePersonsWaitingTime: {e}")
@@ -236,6 +243,9 @@ def detectDwellTime(cameraInfo, frameWidth, frameHeight,startTime, endTime, url,
         alertAlreadyDone = {}
         syncTime = int(time.time())
         lastFrameTime =  datetime.now()
+        # cameraLastResponseTime = 0
+        activeIds = {}
+        
         while datetime.now().time() >= startTime and datetime.now().time() < endTime:
             ret, frame = cap.read()
             if not ret:
@@ -251,7 +261,7 @@ def detectDwellTime(cameraInfo, frameWidth, frameHeight,startTime, endTime, url,
             incTime = (now - lastFrameTime).total_seconds()
             lastFrameTime = now
             
-            # fps =  cap.cap.get(cv2.CAP_PROP_FPS)
+            fps =  cap.cap.get(cv2.CAP_PROP_FPS)
             # incTime = 1/fps if fps > 0 else 0.04
             
             results =  model.track(frame,imgsz = 640, conf=0.2,persist=True, iou = 0.4, tracker = "bytetrack.yaml", verbose =False)
@@ -291,23 +301,23 @@ def detectDwellTime(cameraInfo, frameWidth, frameHeight,startTime, endTime, url,
                                 personIds.append(id)
                                 personTime = calculateDwellTime(id, allPeronPresentTime[roi], allPersonsPresent[roi], idTimeMapping[roi], incTime)
                                 # calculate person Time and store in the file and send it to the api or if we want to store then send all allpersonTime to api
-                                    
-                                if personTime > timeThresholdForDwellTime:
-                                    if id not in alertAlreadyDone[roi]:
-                                        x, y, top_left,bottom_right  = util.fetchTextScale(int(rois.get(roi)[2]["x"]), int(rois.get(roi)[2]["y"]), text = f"Time(in sec): {int(personTime)}" )
-                                        cv2.rectangle(newFrame, top_left, bottom_right, (255, 255, 255), thickness=cv2.FILLED)
-                                        newFrame = cv2.putText(newFrame, f"Time(in sec): {int(personTime)}", (x, y), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-                                        threading.Thread(
-                                            target=sendData,
-                                            args=(folderName, url, newFrame, comp, exhibit, booth, cameraId),
-                                            kwargs={'alertType': 'dwellTime', 'table': table}
-                                        ).start()
-                                        alertAlreadyDone[roi].append(id)
-                                    # util.saveDataInFile(fileName, personTime, idTimeMapping[roi][id], roi)
+                                if roi == "dwellTime":
+                                    if personTime > timeThresholdForDwellTime:
+                                        if id not in alertAlreadyDone[roi]:
+                                            x, y, top_left,bottom_right  = util.fetchTextScale(int(rois.get(roi)[2]["x"]), int(rois.get(roi)[2]["y"]), text = f"Time(in sec): {int(personTime)}" )
+                                            cv2.rectangle(newFrame, top_left, bottom_right, (255, 255, 255), thickness=cv2.FILLED)
+                                            newFrame = cv2.putText(newFrame, f"Time(in sec): {int(personTime)}", (x, y), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                                            threading.Thread(
+                                                target=sendData,
+                                                args=(folderName, url, newFrame, comp, exhibit, booth, cameraId),
+                                                kwargs={'alertType': 'dwellTime', 'table': table}
+                                            ).start()
+                                            alertAlreadyDone[roi].append(id)
+                                        # util.saveDataInFile(fileName, personTime, idTimeMapping[roi][id], roi)
                             if util.personInsidePolygon(rois.get(roi), (x, y)) and roi != "dwellTime":
                                 totalPersonPresent +=1
                 if roi == "waitingTime":
-                    sendInactivePersonsWaitingTime(personIds, allPeronPresentTime[roi], comp, exhibit, booth, cameraId, table = table, url = url)
+                    sendInactivePersonsWaitingTime(personIds, allPeronPresentTime[roi], comp, exhibit, booth, cameraId, table = table, url = url, activeIds = activeIds, fps = fps)
                     # threading.Thread(
                     #     target=sendInactivePersonsWaitingTime, 
                     #     args = (personIds, allPeronPresentTime[roi], comp, exhibit, booth, cameraId ), 
