@@ -150,9 +150,8 @@ def countSackBags(bayDetails):
         if res.get("status") != 200:
             client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "Error Not started Yet", "statusCode" : 400}))
         else:
-            rtsp = "C:/Users/manav/Downloads/heatMap/Sack-Bag-Count/sack18.mp4"
             data = res.get("data")
-            # rtsp = data.get("rtsp_url")
+            rtsp = data.get("rtsp_url")
             direction = data.get("loading_direction")
             modelName = "sackbag_75epochs_270625.pt"
 

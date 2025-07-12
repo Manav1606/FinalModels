@@ -119,7 +119,7 @@ def uploadDataOnCloud(
                 "company_code": bayDetail.get("companyCode"),
                 "store_code": bayDetail.get("storeCode"),
                 "bay_code": bayDetail.get("bayNo"),
-                "no_of_counts": bayDetail.get("counter", 0),
+                "no_of_counts": int(bayDetail["counter"]) if str(bayDetail.get("counter", "")).isdigit() else None,
                 "vehicle_number": bayDetail.get("vehicleNumber", None),
                 "first_frame": f"ftp://ftp.ttpltech.in//{fileName}",
                 "counting_start_time": startTime,
@@ -243,19 +243,23 @@ def sackBagCount(bayDetails, rtsp, direction, frameWidth, frameHeight,modelName,
             if objectCoordinates.get(1) is not None:
                 if loi is not None:
                     countSacks(objectCoordinates.get(1),uncrossedLineSacks, crossedLineSacks, direction, loi[0], loi[1])
+                    for id in objectCoordinates.get(1).keys():
+                        x, y = objectCoordinates.get(1).get(id)
                     # publish data to MQTT broker
-                    if not alertTriggered and countLimit != "" and (len(crossedLineSacks["unLoading"]) > countLimit or len(crossedLineSacks["loading"]) > countLimit):
-                        threading.Thread(target = uploadDataOnCloud, args = (None, None, None, None, None, 
-                            bayDetails), kwargs = {"table": table, "url" : sackAnalyticsUrl,
-                            "startTime" : startTime, "triggerAlert" : 1} ).start()
-                        logger.info("alert Triggered")
-                        # uploadDataOnCloud(
-                        #     None, None, None, None, None, 
-                        #     bayDetails, table = table, url = sackAnalyticsUrl,
-                        #     triggerAlert = 1,
-                        #     startTime= startTime
-                        # )
-                        alertTriggered = 1
+                    if not alertTriggered and countLimit != "":
+                        countLimit = int(countLimit)
+                        if len(crossedLineSacks["unLoading"]) > countLimit or len(crossedLineSacks["loading"]) > countLimit:
+                            threading.Thread(target = uploadDataOnCloud, args = (None, None, None, None, None, 
+                                bayDetails), kwargs = {"table": table, "url" : sackAnalyticsUrl,
+                                "startTime" : startTime, "triggerAlert" : 1} ).start()
+                            logger.info("alert Triggered")
+                            # uploadDataOnCloud(
+                            #     None, None, None, None, None, 
+                            #     bayDetails, table = table, url = sackAnalyticsUrl,
+                            #     triggerAlert = 1,
+                            #     startTime= startTime
+                            # )
+                            alertTriggered = 1
                         
                     publish = {}
                     data  = {
@@ -284,10 +288,11 @@ def sackBagCount(bayDetails, rtsp, direction, frameWidth, frameHeight,modelName,
         if countLimit == len(crossedLineSacks["unLoading"]) or countLimit == len(crossedLineSacks["loading"]):
             isCountIncorrect = False
             
-        if not alertTriggered  and countLimit != "" and countLimit > len(crossedLineSacks["unLoading"]) or countLimit > len(crossedLineSacks["loading"]):
-            threading.Thread(target = uploadDataOnCloud, args = (None, None, None, None, None, 
-                            bayDetails), kwargs = {"table": table, "url" : sackAnalyticsUrl,
-                            "startTime" : startTime, "triggerAlert" : 1, "alertReason" : "count less than Count Limit"} ).start()
+        if not alertTriggered  and countLimit != "":
+            if countLimit > len(crossedLineSacks["unLoading"]) or countLimit > len(crossedLineSacks["loading"]):
+                threading.Thread(target = uploadDataOnCloud, args = (None, None, None, None, None, 
+                                bayDetails), kwargs = {"table": table, "url" : sackAnalyticsUrl,
+                                "startTime" : startTime, "triggerAlert" : 1, "alertReason" : "count less than Count Limit"} ).start()
             
         threading.Thread(target = uploadDataOnCloud, args = (ftpInfo, ftpFolder, lastImageName, frame, imageFolderName,
                             bayDetails), kwargs = {"table": table, "isClosed": True, "url" : sackAnalyticsUrl,
