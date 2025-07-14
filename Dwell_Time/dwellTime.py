@@ -182,7 +182,7 @@ def sendInactivePersonsWaitingTime(personIds, allPeronPresentTime, comp, exhibit
         allIds = []
         for id in allPeronPresentTime.keys():
             if id not in personIds and allPeronPresentTime.get(id) > 25:
-                if activeIds.get(id) is not None and int(activeIds.get(id)) > fps:
+                if activeIds.get(id) is not None and int(activeIds.get(id)) > 2:
                     inactivePersons[id] = allPeronPresentTime.get(id)
                     allIds.append(id)
                 else:
