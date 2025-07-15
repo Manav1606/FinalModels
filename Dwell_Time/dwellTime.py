@@ -116,33 +116,34 @@ def sendData(folderName, url, frame, comp, exhinbit, booth, camId,alertType = "d
     
 def sendPreviousData(folderName, url,booth, table = None):
     try:
-        if os.path.exists(folderName):
-            if len(os.listdir(folderName)) > 0:   
-                try:      
-                    ftp = setupFtp(config["FTP"]["userName"], config["FTP"]["password"], config["FTP"]["host"], int(config["FTP"]["port"]))
-                except Exception as e:
-                    logger.error(f"error in making directory {e}")
-                if os.path.exists(folderName):
-                    for subfolder in os.listdir(folderName):
-                        imageFolder = os.path.join(folderName, subfolder)
-                        images = [f for f in os.listdir(imageFolder) if f.lower().endswith(".jpg")]
-                        ftpPath = config["FTP"].get("ftp_location")
-                        ftpLocation = os.path.join(ftpPath,booth,subfolder)
-                        ftp.ftp_mkdir_recursive(ftpLocation)
-                        for image in images:
-                            ftpImageLocation = os.path.join(ftpLocation, image)
-                            frame  = cv2.imread(os.path.join(imageFolder, image))
-                            ftpres = util.uploadFileOnFtp(ftp, frame, ftpImageLocation)
-                            if ftpres:
-                                os.remove(os.path.join(imageFolder, image))
-                            else:
-                                if ftp is not None:
-                                    ftp.close()
-                                ftp.connect()
-                        if not os.listdir(imageFolder):
-                            os.rmdir(imageFolder)
-                if ftp is not None:
-                    ftp.close()
+        if config.get("DEFAULT", "FTP", fallback=None) is not None:
+            if os.path.exists(folderName):
+                if len(os.listdir(folderName)) > 0:   
+                    try:      
+                        ftp = setupFtp(config["FTP"]["userName"], config["FTP"]["password"], config["FTP"]["host"], int(config["FTP"]["port"]))
+                    except Exception as e:
+                        logger.error(f"error in making directory {e}")
+                    if os.path.exists(folderName):
+                        for subfolder in os.listdir(folderName):
+                            imageFolder = os.path.join(folderName, subfolder)
+                            images = [f for f in os.listdir(imageFolder) if f.lower().endswith(".jpg")]
+                            ftpPath = config["FTP"].get("ftp_location")
+                            ftpLocation = os.path.join(ftpPath,booth,subfolder)
+                            ftp.ftp_mkdir_recursive(ftpLocation)
+                            for image in images:
+                                ftpImageLocation = os.path.join(ftpLocation, image)
+                                frame  = cv2.imread(os.path.join(imageFolder, image))
+                                ftpres = util.uploadFileOnFtp(ftp, frame, ftpImageLocation)
+                                if ftpres:
+                                    os.remove(os.path.join(imageFolder, image))
+                                else:
+                                    if ftp is not None:
+                                        ftp.close()
+                                    ftp.connect()
+                            if not os.listdir(imageFolder):
+                                os.rmdir(imageFolder)
+                    if ftp is not None:
+                        ftp.close()
         try:
             conn = setupDB(table)
         except Exception as e:
@@ -175,9 +176,6 @@ def sendPreviousData(folderName, url,booth, table = None):
 
 def sendInactivePersonsWaitingTime(personIds, allPeronPresentTime, comp, exhibit, booth, camId, url = None, table = None, activeIds = {}, fps = 30):
     try:
-        if not personIds:
-            return None
-        
         inactivePersons = {}
         allIds = []
         for id in allPeronPresentTime.keys():
@@ -188,7 +186,10 @@ def sendInactivePersonsWaitingTime(personIds, allPeronPresentTime, comp, exhibit
                 else:
                     if activeIds.get(id) is None:
                         activeIds[id] = 0
-                    activeIds[id] += 1/fps
+                    activeIds[id] +=1/fps
+            else:
+                if id in activeIds:
+                    activeIds.pop(id, None)
         # inactivePersons = { id: allPeronPresentTime.get(id) for id in allPeronPresentTime.keys() if id not in personIds and allPeronPresentTime.get(id) > 25}
         for id in allIds:
             if id not in personIds:
@@ -230,14 +231,16 @@ def detectDwellTime(cameraInfo, frameWidth, frameHeight,startTime, endTime, url,
         if not os.path.exists(folderName):
             os.makedirs(folderName)
         
-        ftpFolder = f"{config['FTP']['ftp_location']}/{booth}/{datetime.now().date()}"  
-        try:      
-            ftp = setupFtp(config["FTP"]["userName"], config["FTP"]["password"], config["FTP"]["host"], int(config["FTP"]["port"]))
-            ftp.ftp_mkdir_recursive(ftpFolder)
-            ftp.close()
-        except Exception as e:
-            logger.error(f"error in making directory {e}")
-        
+        ftpFolder =  None
+        if config.get("DEFAULT", "FTP", fallback=None) is not None:
+            ftpFolder = f"{config['FTP']['ftp_location']}/{booth}/{datetime.now().date()}"  
+            try:      
+                ftp = setupFtp(config["FTP"]["userName"], config["FTP"]["password"], config["FTP"]["host"], int(config["FTP"]["port"]))
+                ftp.ftp_mkdir_recursive(ftpFolder)
+                ftp.close()
+            except Exception as e:
+                logger.error(f"error in making directory {e}")
+            
         
         personabsentTime = 0
         alertAlreadyDone = {}
@@ -268,15 +271,33 @@ def detectDwellTime(cameraInfo, frameWidth, frameHeight,startTime, endTime, url,
             if results is None:
                 continue
             
+            # showFrame = frame.copy()
+            # for roi in rois.keys():
+            #     if roi == "dwellTime":
+            #         color = (255, 0, 0)
+            #     elif roi == "waitingTime":
+            #         color = (255, 255, 0)
+            #     else:
+            #         color = (0, 0, 255)
+            #     pts_list = [np.array([[int(p["x"]), int(p["y"])] for p in rois.get(roi)], dtype=np.int32)]
+            #     showFrame = cv2.polylines(showFrame, pts_list, 
+            #             True, color, 2)
+            #     showFrame = cv2.putText(showFrame, f"name {roi}", (int(rois.get(roi)[0]["x"]), int(rois.get(roi)[0]["y"])), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                
+                
             for roi in rois.keys():
                 newFrame = frame.copy()
                 pts_list = [np.array([[int(p["x"]), int(p["y"])] for p in rois.get(roi)], dtype=np.int32)]
                 if roi == "dwellTime":
                     color = (255, 0, 0)
+                elif roi == "waitingTime":
+                    color = (255, 255, 0)
                 else:
                     color = (0, 0, 255)
                 newFrame = cv2.polylines(newFrame, pts_list, 
                             True, color, 2)
+                # showFrame = cv2.polylines(showFrame, pts_list, 
+                #             True, color, 2)
                 personIds = []
                 if allPeronPresentTime.get(roi) is None:
                     allPeronPresentTime.update({roi: {}})
@@ -296,6 +317,7 @@ def detectDwellTime(cameraInfo, frameWidth, frameHeight,startTime, endTime, url,
                         personTime = 0
                         if int(classId) == 0 and box.id is not None:
                             x, y, w, h = map(int, box.xywh[0])
+                            # showFrame = cv2.putText(showFrame, f"Id: {box.id[0].item()}", (x, y), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
                             if util.personInsidePolygon(rois.get(roi), (x, y)) and (roi == "dwellTime" or roi == "waitingTime"):
                                 id = box.id[0].item()
                                 personIds.append(id)
@@ -345,6 +367,7 @@ def detectDwellTime(cameraInfo, frameWidth, frameHeight,startTime, endTime, url,
                     else:
                         personabsentTime = 0
                         coolDown = coolDownTime
+                # cv2.imshow(f"Camera {cameraName}", showFrame)s
                         
                 if cv2.waitKey(1) & 0xFF == ord('q'):  # Press 'q' to exit
                     break
