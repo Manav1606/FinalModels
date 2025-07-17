@@ -5,3 +5,7 @@ __pycache__/
 *.mp4
 *.avi
 *.jpg
+!important.jpg
+*.db
+*.zip
+*.json
