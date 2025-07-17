@@ -153,7 +153,7 @@ def countSackBags(bayDetails):
             data = res.get("data")
             rtsp = data.get("rtsp_url")
             direction = data.get("loading_direction")
-            modelName = "sackbag_75epochs_270625.pt"
+            modelName = "1207_50ep.pt"
 
             loi = data.get("loi")
             roi = data.get("roi")
