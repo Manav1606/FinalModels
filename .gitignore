@@ -1,0 +1,16 @@
+__pycache__/
+**/*.log
+**/*.pyc
+**/*.pyo
+**/*.mp4
+**/*.avi
+**/*.jpg
+!important.jpg
+**/*.db
+**/*.zip
+**/*.json
+**/*.png
+**/*.gif
+**/*.pth
+**/*.csv
+**/*.mov
