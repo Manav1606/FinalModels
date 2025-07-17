@@ -11,3 +11,6 @@ __pycache__/
 **/*.json
 **/*.png
 **/*.gif
+**/*.pth
+**/*.csv
+**/*.mov
