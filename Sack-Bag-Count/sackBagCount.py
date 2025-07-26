@@ -13,7 +13,7 @@ import numpy as np
 import main
 import threading
 
-config_path = os.path.join(os.getcwd() ,"Sack-Bag-Count","config.ini")
+config_path = os.path.join(os.getcwd() ,"config.ini")
 config =  configparser.ConfigParser()
 config.read(config_path)
 logger = logging.getLogger("sackBag_logger")
@@ -85,26 +85,28 @@ def uploadDataOnCloud(
     ):
     try:
         fileName = f"{folderName}/{imageName}"
+        base64Frame = None
         if frame is not None:
-            ftp = None
-            try:
-                ftp = utilities.setupFtp(ftpInfo.get("username"), ftpInfo.get("password"), ftpInfo.get("host"), int(ftpInfo.get("port")))
-            except Exception as e:
-                logger.error(f"Error setting up FTP: {e}")
-            ftpRes = utilities.uploadFileOnFtp(ftp, frame, fileName)
-            if not ftpRes:
-                logger.error("Error in uploadFileOnFtp")
-                if not os.path.exists(imageFolderName):
-                    os.makedirs(imageFolderName)
-                imagePath = f"{imageFolderName}/{imageName}"
-                success = cv2.imwrite(imagePath, frame)
-                if success:
-                    logger.error(f"Image saved to {imagePath}")
-                else:
-                    logger.error(f"Failed to save image to {imagePath}")
+            base64Frame = utilities.imageTobase64(frame)
+            # ftp = None
+            # try:
+            #     ftp = utilities.setupFtp(ftpInfo.get("username"), ftpInfo.get("password"), ftpInfo.get("host"), int(ftpInfo.get("port")))
+            # except Exception as e:
+            #     logger.error(f"Error setting up FTP: {e}")
+            # ftpRes = utilities.uploadFileOnFtp(ftp, frame, fileName)
+            # if not ftpRes:
+            #     logger.error("Error in uploadFileOnFtp")
+            #     if not os.path.exists(imageFolderName):
+            #         os.makedirs(imageFolderName)
+            #     imagePath = f"{imageFolderName}/{imageName}"
+            #     success = cv2.imwrite(imagePath, frame)
+            #     if success:
+            #         logger.error(f"Image saved to {imagePath}")
+            #     else:
+            #         logger.error(f"Failed to save image to {imagePath}")
 
-            if ftp is not None:
-                ftp.close()
+            # if ftp is not None:
+            #     ftp.close()
         if not isClosed and triggerAlert:
             apiData = {
                         "company_code": bayDetail.get("companyCode"),
@@ -121,7 +123,8 @@ def uploadDataOnCloud(
                 "bay_code": bayDetail.get("bayNo"),
                 "no_of_counts": int(bayDetail["counter"]) if str(bayDetail.get("counter", "")).isdigit() else None,
                 "vehicle_number": bayDetail.get("vehicleNumber", None),
-                "first_frame": f"ftp://ftp.ttpltech.in//{fileName}",
+                # "first_frame": f"ftp://ftp.ttpltech.in//{fileName}",
+                "first_frame": base64Frame,
                 "counting_start_time": startTime,
             }
         else:
@@ -132,7 +135,8 @@ def uploadDataOnCloud(
                 "loading_count": loadingCount,
                 "unloading_count": unLoadingCount,
                 "is_count_incorrect": isCountIncorrect,
-                "last_frame": f"ftp://ftp.ttpltech.in//{fileName}",
+                # "last_frame": f"ftp://ftp.ttpltech.in//{fileName}",
+                "last_frame": base64Frame,
                 "counting_start_time": startTime,
                 "counting_end_time": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
             }
@@ -150,11 +154,18 @@ def uploadDataOnCloud(
         return None
     return
 
-def sackBagCount(bayDetails, rtsp, direction, frameWidth, frameHeight,modelName, stopEvent,ftpInfo , sackAnalyticsUrl, loi=None, roi=None, client = None, table = None):
+def sackBagCount(bayDetails, rtsp, direction, frameWidth, frameHeight,modelName, stopEvent,ftpInfo , sackAnalyticsUrl, loi=None, roi=None, table = None ,bayCounts = {}):
+    bayNo = bayDetails.get("bayNo")
     try:
         logger.info("starting sackBagCount thread")
-        
-        bayNo = bayDetails.get("bayNo")
+        mqtt = config["MQTT"]
+        client = utilities.MQTTClient(client_id=bayNo, broker = mqtt["broker"], port = int(mqtt["port"]), transport=mqtt["transport"])
+        client.connect()
+        client.loop_start()
+        bayCounts[bayNo] = {
+            'unloadingSacks': 0,
+            'loadingSacks': 0,
+        }
         companyCode = bayDetails.get("companyCode")
         storeCode = bayDetails.get("storeCode")
         
@@ -172,20 +183,20 @@ def sackBagCount(bayDetails, rtsp, direction, frameWidth, frameHeight,modelName,
         
         ftpFolder = f"{ftpInfo.get('ftp_location')}/{companyCode}/{storeCode}/{bayNo}"
         
-        try:
-            ftp = utilities.setupFtp(ftpInfo.get("username"), ftpInfo.get("password"), ftpInfo.get("host"), int(ftpInfo.get("port")))
-            ftp.ftp_mkdir_recursive(ftpFolder)
-        except Exception as e:
-            logger.error(f"Error setting up FTP: {e}")
+        # try:
+        #     ftp = utilities.setupFtp(ftpInfo.get("username"), ftpInfo.get("password"), ftpInfo.get("host"), int(ftpInfo.get("port")))
+        #     ftp.ftp_mkdir_recursive(ftpFolder)
+        # except Exception as e:
+        #     logger.error(f"Error setting up FTP: {e}")
             
         if rtsp:
-            cap = cv2.VideoCapture(rtsp)
+            cap = utilities.VideoCaptureBuffer(rtsp)
             while True:
                 ret, frame = cap.read()
                 if not ret or frame is None:
                     logger.error("Failed to connect to RTSP stream, retrying...")
+                    cap = utilities.VideoCaptureBuffer(rtsp)
                     time.sleep(1)
-                    cap = cv2.VideoCapture(rtsp)
                     continue
                 else:
                     try:
@@ -233,7 +244,7 @@ def sackBagCount(bayDetails, rtsp, direction, frameWidth, frameHeight,modelName,
             if not ret:
                 cap.release()
                 print("Reconnecting to RTSP stream...")
-                cap = cv2.VideoCapture(rtsp)
+                cap = utilities.VideoCaptureBuffer(rtsp)
                 time.sleep(1)
                 continue
             frame = cv2.resize(frame, (frameWidth, frameHeight))
@@ -266,6 +277,7 @@ def sackBagCount(bayDetails, rtsp, direction, frameWidth, frameHeight,modelName,
                         "unloadingSacks": len(crossedLineSacks["unLoading"]),
                         "loadingSacks": len(crossedLineSacks["loading"]),
                     }
+                    bayCounts[bayNo] = data 
                     publish = {
                         "bayNo":bayNo, 
                         "data": data,
@@ -278,7 +290,7 @@ def sackBagCount(bayDetails, rtsp, direction, frameWidth, frameHeight,modelName,
                 else:
                     raise sackExceptions(code = "SC-003", message = "Line of Interest (loi) not provided")
                 # post alert if countLimit is reached in api
-            cv2.imshow(f"frame{bayNo}", results[0].plot())
+            # cv2.imshow(f"frame{bayNo}", results[0].plot())
             # out.write(results[0].plot())
             if cv2.waitKey(1) & 0xFF == ord('q'):  # Press 'q' to exit
                 break
@@ -298,20 +310,26 @@ def sackBagCount(bayDetails, rtsp, direction, frameWidth, frameHeight,modelName,
                             bayDetails), kwargs = {"table": table, "isClosed": True, "url" : sackAnalyticsUrl,
                                                    "loadingCount" : len(crossedLineSacks["loading"]), "unLoadingCount" :len(crossedLineSacks["unLoading"]),
                             "startTime" : startTime, "isCountIncorrect" :isCountIncorrect} ).start()
+        client.loop_stop()
+        # client.disconnect()
         # uploadDataOnCloud(
         #     ftpInfo, ftpFolder, lastImageName, 
         #     frame, imageFolderName, bayDetails, isClosed=True, table=table,
         #     loadingCount=len(crossedLineSacks["loading"]), unLoadingCount=len(crossedLineSacks["unLoading"]),
         #     isCountIncorrect=False, url=sackAnalyticsUrl, startTime= startTime
         # )
-        cv2.destroyWindow(f"frame{bayNo}")      
+        # cv2.destroyWindow(f"frame{bayNo}")      
     except sackExceptions as e:
         logger.error(e)
         main.close(bayNo)
         client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "stop due to some error", "statusCode": 400}))
+        client.loop_stop()
+        # client.disconnect()
         return None
     except Exception as e:
         logger.error("Error in sackBagCount" + traceback.format_exc())
         main.close(bayNo)
         client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "stop due to some error", "statusCode": 400}))
+        client.loop_stop()
+        # client.disconnect()
         return None

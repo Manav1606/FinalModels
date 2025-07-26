@@ -10,6 +10,8 @@ import json
 from pathlib import Path
 import cv2
 import traceback
+from datetime import datetime
+import multiprocessing
 
 # Load config
 config = configparser.ConfigParser()
@@ -37,6 +39,8 @@ queue_data = queue.Queue()
 
 thr = {}
 stopEvents = {}
+
+
   
 table = '''CREATE TABLE IF NOT EXISTS sackBag_Analytics (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -48,8 +52,8 @@ table = '''CREATE TABLE IF NOT EXISTS sackBag_Analytics (
     noOfCounts INTEGER,
     vehicleNumber VARCHAR(20),
     isCountIncorrect TINYINT,
-    firstFrameFilepath VARCHAR(50),
-    lastFrameFilepath VARCHAR(50),
+    firstFrameFilepath TEXT,
+    lastFrameFilepath TEXT,
     countingStartTime TIMESTAMP,
     countingEndTime TIMESTAMP,
     isAlertTriggerd BOOLEAN,
@@ -66,39 +70,39 @@ imageFolderName = f"sack_data/sack_bag_frames/"
 
 def sendPreviousDataOnCloud(ftpInfo, ftpFolder, imageFolderName, table = None, url = None):
     try:
-        ftp = utilities.setupFtp(ftpInfo.get("username"), ftpInfo.get("password"), ftpInfo.get("host"), int(ftpInfo.get("port")))
-        if not ftp:
-            logger.error("FTP connection failed")
-            return
+        # ftp = utilities.setupFtp(ftpInfo.get("username"), ftpInfo.get("password"), ftpInfo.get("host"), int(ftpInfo.get("port")))
+        # if not ftp:
+        #     logger.error("FTP connection failed")
+        #     return
         
-        if os.path.exists(imageFolderName):
-            for compSubfolder in os.listdir(imageFolderName):
-                compSubfolderPath = os.path.join(imageFolderName, compSubfolder)
-                for storeSubFolder in os.listdir(compSubfolderPath):
-                    storeSubfolderPath = os.path.join(compSubfolderPath, storeSubFolder)
-                    for baySubFolder in os.listdir(storeSubfolderPath):
-                        baySubfolderPath = os.path.join(storeSubfolderPath, baySubFolder)
-                        images = [file for file in os.listdir(baySubfolderPath) if file.endswith(('.jpg'))]
-                        ftp.ftp_mkdir_recursive(os.path.join(ftpFolder, compSubfolder, storeSubFolder, baySubFolder))
-                        for image in images:
-                            ftpImageLocation  = f"{ftpFolder}/{compSubfolder}/{storeSubFolder}/{baySubFolder}/{image}"
-                            frame  = cv2.imread(os.path.join(baySubfolderPath, image))
-                            ftpres = utilities.uploadFileOnFtp(ftp, frame, ftpImageLocation)
-                            if ftpres:
-                                os.remove(os.path.join(baySubfolderPath, image))
-                            else:
-                                if ftp is not None:
-                                    ftp.close()
-                                ftp.connect()
-                        if not os.listdir(baySubfolderPath):
-                            os.rmdir(baySubfolderPath)
-                    if not os.listdir(storeSubfolderPath):
-                        os.rmdir(storeSubfolderPath)
-                if not os.listdir(compSubfolderPath):
-                    os.rmdir(compSubfolderPath)
+        # if os.path.exists(imageFolderName):
+        #     for compSubfolder in os.listdir(imageFolderName):
+        #         compSubfolderPath = os.path.join(imageFolderName, compSubfolder)
+        #         for storeSubFolder in os.listdir(compSubfolderPath):
+        #             storeSubfolderPath = os.path.join(compSubfolderPath, storeSubFolder)
+        #             for baySubFolder in os.listdir(storeSubfolderPath):
+        #                 baySubfolderPath = os.path.join(storeSubfolderPath, baySubFolder)
+        #                 images = [file for file in os.listdir(baySubfolderPath) if file.endswith(('.jpg'))]
+        #                 ftp.ftp_mkdir_recursive(os.path.join(ftpFolder, compSubfolder, storeSubFolder, baySubFolder))
+        #                 for image in images:
+        #                     ftpImageLocation  = f"{ftpFolder}/{compSubfolder}/{storeSubFolder}/{baySubFolder}/{image}"
+        #                     frame  = cv2.imread(os.path.join(baySubfolderPath, image))
+        #                     ftpres = utilities.uploadFileOnFtp(ftp, frame, ftpImageLocation)
+        #                     if ftpres:
+        #                         os.remove(os.path.join(baySubfolderPath, image))
+        #                     else:
+        #                         if ftp is not None:
+        #                             ftp.close()
+        #                         ftp.connect()
+        #                 if not os.listdir(baySubfolderPath):
+        #                     os.rmdir(baySubfolderPath)
+        #             if not os.listdir(storeSubfolderPath):
+        #                 os.rmdir(storeSubfolderPath)
+        #         if not os.listdir(compSubfolderPath):
+        #             os.rmdir(compSubfolderPath)
         
-        if ftp is not None:
-            ftp.close()    
+        # if ftp is not None:
+        #     ftp.close()    
             
         try:
             conn = utilities.setupDB(table)
@@ -138,36 +142,83 @@ def sendPreviousDataOnCloud(ftpInfo, ftpFolder, imageFolderName, table = None, u
 
     return
 
-
-def countSackBags(bayDetails):
+def saveConfiguration(bayNo, configData = None):
     try:
-        stopEvent = threading.Event()
+        table = '''CREATE TABLE IF NOT EXISTS Bay_Data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,bayNo INTEGER, rtsp_url TEXT, loading_direction TEXT, loi TEXT, roi TEXT, 
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ); '''
+        try:
+            conn = utilities.setupDB(table)
+        except Exception as e:
+            logger.error(f"Error in setupDB: {e}")
+            return
+        if conn:
+            cursor = conn.cursor
+            data = cursor.execute('SELECT * FROM Bay_Data where bayNo = ?', (bayNo,)).fetchone()
+            if data:
+                if configData:
+                    cloudUpdatedTime = datetime.fromisoformat(configData.get("updated_at")).strftime("%Y-%m-%d %H:%M:%S")
+                    if data[7] < cloudUpdatedTime:
+                        cursor.execute('''UPDATE Bay_Data SET rtsp_url = ?, loading_direction = ?, loi = ?, roi = ?, updated_at = CURRENT_TIMESTAMP WHERE bayNo = ?''',
+                                    (configData.get("rtsp_url"), configData.get("loading_direction"), json.dumps(configData.get("loi")), json.dumps(configData.get("roi")), bayNo))
+                        conn.commit()
+                        logger.info(f"Bay {bayNo} configuration updated successfully.")
+            elif configData:
+                print(configData)
+                cursor.execute('''INSERT into Bay_Data (bayNo, rtsp_url, loading_direction, loi, roi) VALUES (?, ?, ?, ?, ?)''',
+                               (bayNo, configData.get("rtsp_url"), configData.get("loading_direction"), json.dumps(configData.get("loi")), json.dumps(configData.get("roi"))))
+                conn.commit()
+                logger.info(f"Bay {bayNo} configuration saved successfully.")
+            conn.close()
+        if data is not None:
+            data = {
+                "bayNo": data[1],
+                "rtsp_url": data[2],
+                "loading_direction": data[3],
+                "loi": json.loads(data[4]),
+                "roi": json.loads(data[5])
+            }
+        return configData if configData else data
+    except Exception as e:
+        logger.error(f"Error in saveConfiguration: {e}")
+        logger.error("Traceback:\n%s", traceback.format_exc())
+        return None
+
+def countSackBags(bayDetails, bayCounts):
+    try:
+        stopEvent = multiprocessing.Event()
         bayNo = bayDetails.get("bayNo")
         frameWidth = 960
         frameHeight = 640
         urlWithParam =  f"{bayInfoUrl}/{bayNo}"
         res = utilities.sendRequest(urlWithParam, method= "GET")
-        if res.get("status") != 200:
-            client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "Error Not started Yet", "statusCode" : 400}))
-        else:
-            data = res.get("data")
-            rtsp = data.get("rtsp_url")
-            direction = data.get("loading_direction")
-            modelName = "1207_50ep.pt"
+        configData = res.get("data") if res.get("status") == 200 and res.get("data") is not None else None
+        data = saveConfiguration(bayNo, configData) 
+        if data is None:
+            client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "Error Not started Yet(Problem in fetching Data from Cloud DB or from local Db)", "statusCode" : 400}), qos = 1)
+            return
+        # data = res.get("data")
+        rtsp = data.get("rtsp_url")
+        direction = data.get("loading_direction")
+        modelName = "1207_50ep.pt"
 
-            loi = data.get("loi")
-            roi = data.get("roi")
-            
-            t = threading.Thread(
-                target=sackBagCount.sackBagCount,
-                args=(bayDetails, rtsp, direction, frameWidth, frameHeight, modelName, stopEvent, ftpInfo, sackAnalyticsUrl),
-                kwargs={"loi": loi, "roi": roi, "client": client, "table" :table}
-            )
-            thr[bayNo] = t
-            stopEvents[bayNo] = stopEvent
-            logger.info(f"Starting thread for bay {bayNo}")
-            t.start()
-            # client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "started", "statusCode" : 200}))
+        loi = data.get("loi")
+        roi = data.get("roi")
+        bayCounts[bayNo] = {
+            'unloadingSacks': 0,
+            'loadingSacks': 0,
+        }
+        t = multiprocessing.Process(
+            target=sackBagCount.sackBagCount,
+            args=(bayDetails, rtsp, direction, frameWidth, frameHeight, modelName, stopEvent, ftpInfo, sackAnalyticsUrl),
+            kwargs={"loi": loi, "roi": roi, "table" :table, 'bayCounts': bayCounts}
+        )
+        thr[bayNo] = t
+        stopEvents[bayNo] = stopEvent
+        logger.info(f"Starting thread for bay {bayNo}")
+        t.start()
+        # client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "started", "statusCode" : 200}))
 
     except Exception as e:
         logger.error(f"Error in countSackBags: {e}")
@@ -183,7 +234,7 @@ def close(bayNo):
                 stop_event.set()
             thread.join(timeout=5)
             logger.info(f"Thread for bay {bayNo} has been closed.")
-            client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "stopped", "statusCode": 200}))
+            client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "stopped", "statusCode": 200}), qos = 1)
 
         thr.pop(bayNo, None)
         stopEvents.pop(bayNo, None)
@@ -198,7 +249,7 @@ def read_json_file(filepath):
     with open(filepath, "r") as f:
         return json.load(f)
 
-def startCounting():
+def startCounting(bayCounts):
     filepath = os.path.join(os.getcwd(), "mqtt.json")
     while True:
         try:
@@ -206,13 +257,13 @@ def startCounting():
             for bayDetail in data.get("start", []):
                 bayNo = bayDetail.get("bayNo")
                 if bayDetail.get("isCheck") == 1 and bayNo in thr:
-                    client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "already running", "statusCode": 201}))
+                    client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "already running", "statusCode": 201, "bayCounts": bayCounts.get(bayNo, {})}), qos = 1)
                 elif bayDetail.get("isCheck") == 1 and bayNo not in thr:
-                    client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "Not running", "statusCode": 202}))
+                    client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "Not running", "statusCode": 202}), qos = 1)
                 elif bayNo not in thr and bayDetail.get("isCheck") == 0:
-                    countSackBags(bayDetail)
+                    countSackBags(bayDetail, bayCounts)
                 else:
-                    client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "already running", "statusCode": 201}))
+                    client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "already running", "statusCode": 201, "bayCounts": bayCounts.get(bayNo, {})}), qos = 1)
 
                 data["start"] = [entry for entry in data.get("start", []) if entry.get("bayNo") != bayNo]
                 utilities.saveDataInJson(filepath, data)
@@ -231,13 +282,13 @@ def stopCounting():
             for bayDetail in data.get("stop", []):
                 bayNo = bayDetail.get("bayNo")
                 if bayDetail.get("isCheck") == 1 and bayNo not in thr:
-                    client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "not running", "statusCode": 202})) 
+                    client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "not running", "statusCode": 202}), qos = 1) 
                 elif bayDetail.get("isCheck") == 1 and bayNo in thr:
-                    client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "already running", "statusCode": 201}))  
+                    client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "already running", "statusCode": 201}), qos = 1)  
                 elif bayNo in thr and bayDetail.get("isCheck") == 0:
                     close(bayNo)
                 else:
-                    client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "not running", "statusCode": 202}))
+                    client.publish("sack/bag/ack", json.dumps({"bayNo": bayNo, "status": "not running", "statusCode": 202}), qos = 1)
 
                 # Clean up the stop entry
                 data["stop"] = [entry for entry in data.get("stop", []) if entry.get("bayNo") != bayNo]
@@ -249,15 +300,31 @@ def stopCounting():
             logger.error(f"Error in stopCounting: {e}")
             time.sleep(1)
 
-# === MAIN EXECUTION ===
+def publishDataOfBays(sackDataQueue):
+    try:
+        while True:
+            try:
+                if not sackDataQueue.empty():
+                    client.publish("sack/bag/count", sackDataQueue.get())
+                else:
+                    time.sleep(0.1)
+            except Exception as queueError:
+                logger.error(f"Error in fetching data from a queue: {queueError}")
+    except Exception as e:
+        logger.error(f"Error in publish Data of Bays: {e}")        
+            
 if __name__ == "__main__":
     mqtt = config["MQTT"]
-    client = utilities.MQTTClient(client_id=mqtt["clientId"], broker = mqtt["broker"], on_message=on_message, transport=mqtt["transport"])
+    client = utilities.MQTTClient(client_id=mqtt["clientId"], broker = mqtt["broker"], port = int(mqtt["port"]), on_message=on_message, transport=mqtt["transport"])
     client.connect()
     client.loop_start()
-
-    threading.Thread(target=startCounting, daemon=True).start()
+    
+    manager = multiprocessing.Manager()
+    bayCounts = manager.dict()
+    
+    threading.Thread(target=startCounting, args = (bayCounts,), daemon=True).start()
     threading.Thread(target=stopCounting, daemon=True).start()
+    sackDataQueue =  multiprocessing.Queue()
     syncTime = int(time.time())
     
     try:
@@ -272,4 +339,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         logger.info("Shutting down MQTT client...")
         client.loop_stop()
-        client.disconnect()
+        # client.disconnect()

@@ -12,6 +12,7 @@ import paho.mqtt.client as mqtt
 from paho.mqtt.client import CallbackAPIVersion
 import sqlite3
 import requests
+import base64
 
 
 logger = logging.getLogger("sackBag_logger")
@@ -189,7 +190,7 @@ class MQTTClient:
     def on_connect(self,client, userdata, flags, reason_code, properties =None):
         print(f"Connected with result code: {reason_code}")
         if reason_code == 0:
-            self.subscribe(self.topic,0) if self.topic else None
+            self.subscribe(self.topic,1) if self.topic else None
 
     # Default callback for receiving a message
     def on_message(self, client, userdata, msg):
@@ -255,7 +256,7 @@ def uploadFileOnFtp(ftp,frame, ftpPath):
 
 def sendRequest(url, data = None, method = "POST"):
     try:
-        logger.info(f"data {data}")
+        # logger.info(f"data {data}")
         headers = {
             'content-type': 'application/json',
         }
@@ -263,7 +264,7 @@ def sendRequest(url, data = None, method = "POST"):
             response = requests.post(url, json=data, headers=headers)
         else:
             response = requests.get(url)
-        if response.status_code == 200:
+        if response.status_code == 200 or response.status_code == 201:
             logger.error(f"Data sent successfully to {url}")
             return {
                 "data": response.json(),
@@ -318,6 +319,7 @@ def fetchObject(results, objects = [], roi = None):
                             objectsCoordinates[classId] = {}
                         if roi is not None:
                             if objectInsidePolygon(roi, (x,  y)):
+                                print("checkimg jisinf")
                                 objectsCoordinates[classId][id] = (x, y)
                         else:
                             objectsCoordinates[classId][id] = (x, y)
@@ -325,6 +327,20 @@ def fetchObject(results, objects = [], roi = None):
     except Exception as e:
         logger.error(f"error in fetch Object {e}")
         return {}
+
+def imageTobase64(frame, imageFormat = ".jpg"):
+    try:
+        success, encoded_image = cv2.imencode(imageFormat, frame)
+        if success:
+            image_bytes = encoded_image.tobytes()
+            base64_string = base64.b64encode(image_bytes).decode('utf-8')
+            return base64_string
+        else:
+            logger.error("Failed to encode image")
+            return None
+    except Exception as e:
+        logger.error(f"Error in imageTobase64: {e}")
+        return None
     
 
 
