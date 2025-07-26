@@ -15,7 +15,8 @@ logger = logging.getLogger('dwellTime_logger')
 
 class setupDB:
     def __init__(self, table):
-        db_path = os.path.join(os.path.dirname(__file__), 'myDatabase.db')
+        # db_path = os.path.join(os.path.dirname(__file__), 'myDatabase.db')
+        db_path = f"{os.path.dirname(__file__)}/myDatabase.db"
         self.conn = sqlite3.connect(db_path)
         self.cursor = self.conn.cursor()
         self.cursor.execute(table)
@@ -180,8 +181,9 @@ def sendRequest(url, data):
         headers = {
             'content-type': 'application/json',
         }
+        print(f"Sending data to {url}: {data}")
         response = requests.post(url, json=data, headers=headers)
-        if response.status_code == 200:
+        if response.status_code == 200 or response.status_code == 201:
             logger.error(f"Data sent successfully to {url}")
             return True
         else:
@@ -213,5 +215,3 @@ def fetchTextScale(x, y, text="STAFF_ABSENT", font=cv2.FONT_HERSHEY_SIMPLEX, fon
     bottom_right = (x + text_width + 5, text_y + 5)
     
     return x, text_y, top_left, bottom_right
-
-        
